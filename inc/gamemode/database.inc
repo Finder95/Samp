@@ -12,6 +12,8 @@ forward Database_FetchInt(DBResult:result, const field[]);
 forward Database_FetchString(DBResult:result, const field[], output[], size);
 forward Float:Database_FetchFloat(DBResult:result, const field[]);
 forward Database_LogQuery(const prefix[], const query[]);
+forward bool:Database_TableHasColumn(const table[], const column[]);
+forward Database_AddColumnIfMissing(const table[], const column[], const definition[]);
 
 stock Database_Init()
 {
@@ -52,9 +54,14 @@ stock Database_CreateStructure()
         "spawn_angle REAL DEFAULT 90.0," \
         "ip TEXT," \
         "last_login TEXT," \
+        "property_id INTEGER DEFAULT 0," \
+        "property_spawn INTEGER DEFAULT 0," \
         "created_at TEXT DEFAULT CURRENT_TIMESTAMP);"
     );
     Database_Execute(query);
+
+    Database_AddColumnIfMissing("accounts", "property_id", "INTEGER DEFAULT 0");
+    Database_AddColumnIfMissing("accounts", "property_spawn", "INTEGER DEFAULT 0");
 
     format(query, sizeof(query),
         "CREATE TABLE IF NOT EXISTS admin_logs (" \
@@ -132,6 +139,36 @@ stock Database_CreateStructure()
         "created_at TEXT DEFAULT CURRENT_TIMESTAMP);"
     );
     Database_Execute(query);
+
+    format(query, sizeof(query),
+        "CREATE TABLE IF NOT EXISTS properties (" \
+        "id INTEGER PRIMARY KEY AUTOINCREMENT," \
+        "name TEXT," \
+        "price INTEGER DEFAULT 0," \
+        "owner_id INTEGER DEFAULT 0," \
+        "locked INTEGER DEFAULT 0," \
+        "interior INTEGER DEFAULT 0," \
+        "enter_x REAL," \
+        "enter_y REAL," \
+        "enter_z REAL," \
+        "exit_x REAL," \
+        "exit_y REAL," \
+        "exit_z REAL," \
+        "created_at TEXT DEFAULT CURRENT_TIMESTAMP," \
+        "updated_at TEXT DEFAULT CURRENT_TIMESTAMP);"
+    );
+    Database_Execute(query);
+
+    format(query, sizeof(query),
+        "CREATE TABLE IF NOT EXISTS property_logs (" \
+        "id INTEGER PRIMARY KEY AUTOINCREMENT," \
+        "property_id INTEGER," \
+        "account_id INTEGER," \
+        "action TEXT," \
+        "details TEXT," \
+        "created_at TEXT DEFAULT CURRENT_TIMESTAMP);"
+    );
+    Database_Execute(query);
     return 1;
 }
 
@@ -198,6 +235,52 @@ stock Float:Database_FetchFloat(DBResult:result, const field[])
         return 0.0;
     }
     return db_get_field_assoc_float(result, field);
+}
+
+stock bool:Database_TableHasColumn(const table[], const column[])
+{
+    if(gDatabaseHandle == DB:0)
+    {
+        return false;
+    }
+
+    new query[128];
+    format(query, sizeof(query), "PRAGMA table_info(%s);", table);
+
+    new DBResult:result = db_query(gDatabaseHandle, query);
+    if(!result)
+    {
+        return false;
+    }
+
+    new columnName[64];
+    new bool:found = false;
+
+    while(db_next_row(result))
+    {
+        db_get_field_assoc(result, "name", columnName, sizeof(columnName));
+        if(!strcmp(columnName, column, false))
+        {
+            found = true;
+            break;
+        }
+    }
+
+    db_free_result(result);
+    return found;
+}
+
+stock Database_AddColumnIfMissing(const table[], const column[], const definition[])
+{
+    if(Database_TableHasColumn(table, column))
+    {
+        return 0;
+    }
+
+    new query[256];
+    format(query, sizeof(query), "ALTER TABLE %s ADD COLUMN %s %s", table, column, definition);
+    Database_Execute(query);
+    return 1;
 }
 
 stock Database_LogQuery(const prefix[], const query[])

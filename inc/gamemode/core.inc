@@ -44,7 +44,9 @@ enum E_PLAYER_DATA
     pBankBalance,
     pPaycheck,
     pJobID,
-    pJobExperience
+    pJobExperience,
+    pPropertyID,
+    bool:pPropertySpawn
 };
 
 new PlayerData[MAX_PLAYERS][E_PLAYER_DATA];
@@ -109,6 +111,8 @@ stock Core_ResetPlayerData(playerid)
     PlayerData[playerid][pPaycheck] = 0;
     PlayerData[playerid][pJobID] = 0;
     PlayerData[playerid][pJobExperience] = 0;
+    PlayerData[playerid][pPropertyID] = 0;
+    PlayerData[playerid][pPropertySpawn] = false;
     return 1;
 }
 

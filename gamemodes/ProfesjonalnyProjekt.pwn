@@ -6,6 +6,7 @@
 #include "../inc/gamemode/core.inc"
 #include "../inc/gamemode/database.inc"
 #include "../inc/gamemode/players.inc"
+#include "../inc/gamemode/properties.inc"
 #include "../inc/gamemode/economy.inc"
 #include "../inc/gamemode/jobs.inc"
 #include "../inc/gamemode/admin.inc"
@@ -18,6 +19,7 @@ public OnGameModeInit()
     Database_CreateStructure();
 
     Players_Init();
+    Properties_Init();
     Economy_Init();
     Jobs_Init();
     Admin_Init();
@@ -37,6 +39,7 @@ public OnGameModeExit()
     Vehicles_Shutdown();
     Jobs_Shutdown();
     Economy_Shutdown();
+    Properties_Shutdown();
     Players_Shutdown();
     Admin_Shutdown();
     Database_Shutdown();
@@ -139,6 +142,10 @@ public OnPlayerEnterCheckpoint(playerid)
 
 public OnPlayerPickUpPickup(playerid, pickupid)
 {
+    if(Properties_OnPlayerPickUpPickup(playerid, pickupid))
+    {
+        return 1;
+    }
     if(Jobs_OnPlayerPickUpPickup(playerid, pickupid))
     {
         return 1;

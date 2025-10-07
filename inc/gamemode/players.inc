@@ -25,6 +25,16 @@ forward Jobs_OnDialogResponse(playerid, dialogid, response, listitem, inputtext[
 forward Jobs_OnPlayerStateChange(playerid, newstate, oldstate);
 forward Jobs_OnPlayerSave(playerid);
 forward Jobs_GetJobName(jobid, output[], size);
+forward Properties_OnPlayerConnect(playerid);
+forward Properties_OnPlayerDisconnect(playerid);
+forward Properties_OnAccountLoaded(playerid);
+forward Properties_OnAccountRegistered(playerid);
+forward Properties_OnPlayerLogin(playerid);
+forward Properties_OnPlayerSpawn(playerid);
+forward Properties_OnPlayerCommandText(playerid, cmdtext[]);
+forward Properties_OnDialogResponse(playerid, dialogid, response, listitem, inputtext[]);
+forward Properties_OnPlayerSave(playerid);
+forward Properties_GetPropertyName(sqlid, output[], size);
 forward Players_Init();
 forward Players_Shutdown();
 forward Players_OnPlayerConnect(playerid);
@@ -72,6 +82,8 @@ stock Players_OnPlayerConnect(playerid)
     Core_ResetPlayerData(playerid);
     PlayerData[playerid][pConnected] = true;
 
+    Properties_OnPlayerConnect(playerid);
+
     new name[MAX_PLAYER_NAME + 1];
     GetPlayerName(playerid, name, sizeof(name));
 
@@ -97,6 +109,7 @@ stock Players_OnPlayerDisconnect(playerid, reason)
     }
     Economy_OnPlayerDisconnect(playerid);
     Jobs_OnPlayerDisconnect(playerid);
+    Properties_OnPlayerDisconnect(playerid);
     Core_ResetPlayerData(playerid);
     return 1;
 }
@@ -121,6 +134,7 @@ stock Players_OnPlayerSpawn(playerid)
     Players_SpawnPlayer(playerid);
     Economy_OnPlayerSpawn(playerid);
     Jobs_OnPlayerSpawn(playerid);
+    Properties_OnPlayerSpawn(playerid);
     return 1;
 }
 
@@ -142,6 +156,11 @@ stock Players_OnPlayerCommandText(playerid, cmdtext[])
         return 1;
     }
 
+    if(Properties_OnPlayerCommandText(playerid, cmdtext))
+    {
+        return 1;
+    }
+
     if(!strcmp(cmdtext, "/stats", true))
     {
         new message[256];
@@ -154,6 +173,22 @@ stock Players_OnPlayerCommandText(playerid, cmdtext[])
         SendClientMessage(playerid, COLOR_INFO, message);
         format(message, sizeof(message), "Ostatnie logowanie: %s | IP: %s", PlayerData[playerid][pLastLogin], PlayerData[playerid][pIP]);
         SendClientMessage(playerid, COLOR_INFO, message);
+
+        new propertyLine[256];
+        new propertyName[64];
+        if(PlayerData[playerid][pPropertyID] > 0)
+        {
+            if(!Properties_GetPropertyName(PlayerData[playerid][pPropertyID], propertyName, sizeof(propertyName)))
+            {
+                format(propertyName, sizeof(propertyName), "Brak");
+            }
+            format(propertyLine, sizeof(propertyLine), "Nieruchomosc: %s | Respawn: %s", propertyName, PlayerData[playerid][pPropertySpawn] ? "dom" : "miasto");
+        }
+        else
+        {
+            format(propertyLine, sizeof(propertyLine), "Nieruchomosc: Brak | Respawn: miasto");
+        }
+        SendClientMessage(playerid, COLOR_INFO, propertyLine);
         return 1;
     }
 
@@ -178,6 +213,11 @@ stock Players_OnPlayerCommandText(playerid, cmdtext[])
 
 stock Players_OnDialogResponse(playerid, dialogid, response, listitem, inputtext[])
 {
+    if(Properties_OnDialogResponse(playerid, dialogid, response, listitem, inputtext))
+    {
+        return 1;
+    }
+
     switch(dialogid)
     {
         case DIALOG_LOGIN:
@@ -280,10 +320,10 @@ stock Players_SaveAccount(playerid)
     PlayerData[playerid][pSkin] = GetPlayerSkin(playerid);
 
     new query[512];
-    format(query, sizeof(query), "UPDATE accounts SET level=%d, money=%d, skin=%d, spawn_x=%f, spawn_y=%f, spawn_z=%f, spawn_angle=%f, last_login='%s' WHERE id=%d",
+    format(query, sizeof(query), "UPDATE accounts SET level=%d, money=%d, skin=%d, spawn_x=%f, spawn_y=%f, spawn_z=%f, spawn_angle=%f, property_id=%d, property_spawn=%d, last_login='%s' WHERE id=%d",
         PlayerData[playerid][pLevel], PlayerData[playerid][pMoney], PlayerData[playerid][pSkin],
         Float:PlayerData[playerid][pSpawnX], Float:PlayerData[playerid][pSpawnY], Float:PlayerData[playerid][pSpawnZ],
-        Float:PlayerData[playerid][pSpawnAngle], PlayerData[playerid][pLastLogin], PlayerData[playerid][pID]);
+        Float:PlayerData[playerid][pSpawnAngle], PlayerData[playerid][pPropertyID], PlayerData[playerid][pPropertySpawn], PlayerData[playerid][pLastLogin], PlayerData[playerid][pID]);
     Database_Execute(query);
 
     new logMessage[144];
@@ -291,6 +331,7 @@ stock Players_SaveAccount(playerid)
     Players_LogEvent(playerid, "INFO", logMessage);
     Economy_OnPlayerSave(playerid);
     Jobs_OnPlayerSave(playerid);
+    Properties_OnPlayerSave(playerid);
     return 1;
 }
 
@@ -333,6 +374,8 @@ stock Players_LoadAccount(playerid)
         Database_FetchString(result, "password", PlayerData[playerid][pPassword], sizeof(PlayerData[playerid][pPassword]));
         Database_FetchString(result, "salt", PlayerData[playerid][pSalt], sizeof(PlayerData[playerid][pSalt]));
         Database_FetchString(result, "last_login", PlayerData[playerid][pLastLogin], sizeof(PlayerData[playerid][pLastLogin]));
+        PlayerData[playerid][pPropertyID] = Database_FetchInt(result, "property_id");
+        PlayerData[playerid][pPropertySpawn] = bool:Database_FetchInt(result, "property_spawn");
 
         new ip[16];
         GetPlayerIp(playerid, ip, sizeof(ip));
@@ -353,6 +396,7 @@ stock Players_LoadAccount(playerid)
     {
         Economy_OnAccountLoaded(playerid);
         Jobs_OnAccountLoaded(playerid);
+        Properties_OnAccountLoaded(playerid);
     }
     return 1;
 }
@@ -408,6 +452,7 @@ stock Players_LoginPlayer(playerid, const password[])
     Players_LogEvent(playerid, "LOGIN", logMessage);
     Economy_OnPlayerLogin(playerid);
     Jobs_OnPlayerLogin(playerid);
+    Properties_OnPlayerLogin(playerid);
     return 1;
 }
 
@@ -461,6 +506,7 @@ stock Players_RegisterPlayer(playerid, const password[])
     Players_LogEvent(playerid, "REGISTER", logMessage);
     Economy_OnAccountRegistered(playerid);
     Jobs_OnAccountRegistered(playerid);
+    Properties_OnAccountRegistered(playerid);
     return 1;
 }
 
