@@ -83,20 +83,30 @@ gospodarką RP.
 ### Automatyczne testy botów
 Moduł `tools.autorp.tester` udostępnia klasę `TestOrchestrator`, która potrafi uruchomić
 lokalny serwer SA-MP (klasa `SampServerController`), zapisać scenariusze botów na dysk i
-wykonać je na zadanych klientach (implementujących interfejs `BotClient`).
+wykonać je na zdefiniowanych klientach (implementujących interfejs `BotClient`). Orkiestrator
+obsługuje wiele klientów jednocześnie, śledzi oczekiwane wpisy w `server_log.txt` (przez
+`ServerLogMonitor`) i umożliwia budowanie planów testowych (`BotRunContext`) z powtórzeniami,
+opóźnieniami i asercjami na logi.
+
+Konfiguracja JSON może zawierać blok `bot_automation`, w którym definiujemy listę klientów
+(`clients`) oraz przebiegów (`runs`). Każdy przebieg wskazuje scenariusz z sekcji
+`bot_scenarios`, listę klientów do uruchomienia, oczekiwane frazy w logach serwera oraz
+liczbę iteracji i odstępów między nimi. Przykładowa konfiguracja znajduje się w
+`configs/sample_config.json`.
 
 Moduł `tools.autorp.bots` zawiera gotowe implementacje klientów:
 
-- `WineSampClient` – uruchamia prawdziwego klienta SA-MP przez Wine i komunikuje się z nim
-  poprzez plik `bot_commands.txt` (domyślnie w katalogu gry);
-- `FileCommandTransport` oraz `ScriptRunner` – pozwalają tworzyć własne integracje z
-  makrami lub CLEO, tłumacząc akcje scenariuszy (`wait`, `chat`, `teleport`, komendy) na
-  rzeczywiste instrukcje;
+- `WineSampClient` – uruchamia prawdziwego klienta SA-MP przez Wine (z obsługą dry-run,
+  czyszczenia pliku komend i konfigurowanego opóźnienia po połączeniu);
 - `DummyBotClient` – lekka implementacja do testów jednostkowych lub środowisk CI, która
-  zapisuje sekwencje komend bez uruchamiania GTA:SA.
+  zapisuje sekwencje komend bez uruchamiania GTA:SA;
+- `FileCommandTransport`, `BufferedCommandTransport` oraz `ScriptRunner` – pozwalają tworzyć
+  własne integracje z makrami lub CLEO, tłumacząc akcje scenariuszy (`wait`, `chat`,
+  `teleport`, `keypress`, `macro`, `wait_for`, komendy tekstowe) na rzeczywiste instrukcje.
 
 Każdy przebieg scenariusza zwraca `PlaybackLog` z wysłanymi akcjami i znacznikami czasu,
-co ułatwia asercję i diagnostykę pipeline'u QA.
+natomiast rezultat `TestRunResult` zawiera listę klientów, którzy ukończyli test, oraz
+status dopasowania oczekiwań z logów serwera.
 
 ### Testy
 ```bash

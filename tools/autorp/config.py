@@ -8,6 +8,7 @@ from typing import Sequence
 
 from .pawn import escape_pawn_string, indent_lines, sanitize_identifier
 from .scenario import BotScenarioSpec
+from .tester import BotRunContext
 
 
 def _parse_colour(value: int | str) -> int:
@@ -1590,6 +1591,94 @@ class BotScenarioDefinition:
 
 
 @dataclass(slots=True)
+class BotClientDefinition:
+    """Definition describing how to instantiate a bot client."""
+
+    name: str
+    type: str = "dummy"
+    command_file: str | None = None
+    command_separator: str | None = None
+    gta_directory: str | None = None
+    launcher: str | None = None
+    wine_binary: str | None = None
+    dry_run: bool = False
+    connect_delay: float = 0.0
+    reset_commands_on_connect: bool = True
+    environment: dict[str, str] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "BotClientDefinition":
+        return cls(
+            name=str(data.get("name")),
+            type=str(data.get("type", "dummy")),
+            command_file=data.get("command_file"),
+            command_separator=data.get("command_separator"),
+            gta_directory=data.get("gta_dir") or data.get("gta_directory"),
+            launcher=data.get("launcher"),
+            wine_binary=data.get("wine_binary"),
+            dry_run=bool(data.get("dry_run", False)),
+            connect_delay=float(data.get("connect_delay", 0.0)),
+            reset_commands_on_connect=bool(data.get("reset_commands_on_connect", True)),
+            environment=dict(data.get("environment", {})),
+        )
+
+
+@dataclass(slots=True)
+class BotRunDefinition:
+    """Definition of a suite run connecting scripts and clients."""
+
+    scenario: str
+    clients: tuple[str, ...] = ()
+    expect_server_logs: tuple[str, ...] = ()
+    log_timeout: float = 15.0
+    iterations: int = 1
+    wait_after: float = 0.0
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "BotRunDefinition":
+        scenario_name = data.get("scenario") or data.get("script") or data.get("name")
+        if scenario_name is None:
+            raise ValueError("Bot run definition wymaga pola 'scenario'")
+        clients = tuple(str(name) for name in data.get("clients", []))
+        expect = tuple(str(entry) for entry in data.get("expect_server_logs", []))
+        return cls(
+            scenario=str(scenario_name),
+            clients=clients,
+            expect_server_logs=expect,
+            log_timeout=float(data.get("log_timeout", 15.0)),
+            iterations=int(data.get("iterations", 1)),
+            wait_after=float(data.get("wait_after", 0.0)),
+        )
+
+
+@dataclass(slots=True)
+class BotAutomationPlan:
+    """Plan describing clients and their orchestrated runs."""
+
+    clients: tuple[BotClientDefinition, ...]
+    runs: tuple[BotRunDefinition, ...]
+
+    def contexts(self, scenarios: Sequence[BotScenarioDefinition]) -> list[BotRunContext]:
+        scenario_lookup = {scenario.name: scenario for scenario in scenarios}
+        contexts: list[BotRunContext] = []
+        for run in self.runs:
+            scenario = scenario_lookup.get(run.scenario)
+            if scenario is None:
+                continue
+            script = scenario.to_spec().to_bot_script()
+            contexts.append(
+                BotRunContext(
+                    script=script,
+                    client_names=run.clients,
+                    expect_server_logs=run.expect_server_logs,
+                    log_timeout=run.log_timeout,
+                    iterations=run.iterations,
+                    wait_after=run.wait_after,
+                )
+            )
+        return contexts
+
+@dataclass(slots=True)
 class ServerSettings:
     """Settings written into server.cfg."""
 
@@ -1669,6 +1758,8 @@ class GamemodeConfig:
     jobs: Sequence[Job] = field(default_factory=list)
     pickups: Sequence[Pickup] = field(default_factory=list)
     scenarios: Sequence[BotScenarioDefinition] = field(default_factory=list)
+    bot_clients: Sequence[BotClientDefinition] = field(default_factory=list)
+    bot_runs: Sequence[BotRunDefinition] = field(default_factory=list)
     properties: Sequence[Property] = field(default_factory=list)
     npcs: Sequence[Npc] = field(default_factory=list)
     events: Sequence[ScheduledEvent] = field(default_factory=list)
@@ -1747,6 +1838,15 @@ class GamemodeConfig:
             else None
         )
         scenarios = [BotScenarioDefinition.from_dict(s) for s in data.get("bot_scenarios", [])]
+        automation_data = data.get("bot_automation", {})
+        bot_clients = [
+            BotClientDefinition.from_dict(entry)
+            for entry in automation_data.get("clients", [])
+        ]
+        bot_runs = [
+            BotRunDefinition.from_dict(entry)
+            for entry in automation_data.get("runs", automation_data.get("suite", []))
+        ]
         server_settings = ServerSettings(**data.get("server", {}))
         world_settings = WorldSettings(**data.get("world", {}))
         economy = EconomySettings(**data.get("economy", {}))
@@ -1781,6 +1881,8 @@ class GamemodeConfig:
             patrol_stop_command=patrol_stop_command,
             weather_cycle=weather_cycle,
             scenarios=scenarios,
+            bot_clients=bot_clients,
+            bot_runs=bot_runs,
             server_settings=server_settings,
             world_settings=world_settings,
             economy=economy,
@@ -1798,6 +1900,9 @@ class GamemodeConfig:
 
     def skill_lookup(self) -> dict[str, Skill]:
         return {skill.name: skill for skill in self.skills}
+
+    def scenario_lookup(self) -> dict[str, BotScenarioDefinition]:
+        return {scenario.name: scenario for scenario in self.scenarios}
 
     def _default_faction_constant(self) -> str:
         if not self.factions:
@@ -2876,6 +2981,17 @@ class GamemodeConfig:
             paths.append(target)
         return paths
 
+    def bot_automation_plan(self) -> BotAutomationPlan | None:
+        if not self.bot_clients and not self.bot_runs:
+            return None
+        return BotAutomationPlan(clients=tuple(self.bot_clients), runs=tuple(self.bot_runs))
+
+    def bot_run_contexts(self) -> list[BotRunContext]:
+        plan = self.bot_automation_plan()
+        if plan is None:
+            return []
+        return plan.contexts(self.scenarios)
+
     def server_cfg_content(self) -> str:
         return self.server_settings.to_server_cfg(self.name)
 
@@ -3052,4 +3168,7 @@ __all__ = [
     "WeatherStage",
     "WeatherCycle",
     "BotScenarioDefinition",
+    "BotClientDefinition",
+    "BotRunDefinition",
+    "BotAutomationPlan",
 ]

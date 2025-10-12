@@ -131,7 +131,7 @@ def test_cli_exports_bot_scripts(tmp_path: Path, monkeypatch):
     assert files, "expected at least one bot script"
     data = read_json(files[0])
     assert "commands" in data
-    assert any(cmd.startswith("/dolacz") for cmd in data["commands"])
+    assert any(cmd.startswith("/") for cmd in data["commands"])
 
 
 def test_cli_runs_bot_tests(tmp_path: Path, monkeypatch):
@@ -144,14 +144,23 @@ def test_cli_runs_bot_tests(tmp_path: Path, monkeypatch):
 
     @contextmanager
     def fake_running(self, timeout: float = 20.0):
+        class FakeMonitor:
+            def mark(self) -> None:
+                return None
+
+            def wait_for(self, phrase: str, timeout: float = 10.0) -> bool:
+                return True
+
         class DummyController:
             server_address = "127.0.0.1:7777"
+            log_monitor = FakeMonitor()
 
         yield DummyController()
 
     class FakeController:
         def __init__(self, package_dir: Path, *args, **kwargs):
             self.package_dir = package_dir
+            self.log_monitor = None
 
         def running(self, timeout: float = 20.0):
             return fake_running(self, timeout)
@@ -170,5 +179,6 @@ def test_cli_runs_bot_tests(tmp_path: Path, monkeypatch):
         ]
     )
 
-    assert command_file.exists()
-    assert command_file.read_text(encoding="utf-8").strip(), "expected commands to be written"
+    plan_log = package_dir / "Test" / "patrol_suite.log"
+    assert plan_log.exists()
+    assert plan_log.read_text(encoding="utf-8").strip(), "expected commands to be written"

@@ -5,10 +5,10 @@ import argparse
 import json
 from pathlib import Path
 
-from .bots import DummyBotClient, FileCommandTransport, WineSampClient
-from .config import GamemodeConfig
+from .bots import BufferedCommandTransport, DummyBotClient, FileCommandTransport, WineSampClient
+from .config import BotClientDefinition, GamemodeConfig
 from .generator import GamemodeGenerator
-from .tester import SampServerController, TestOrchestrator
+from .tester import BotRunContext, SampServerController, TestOrchestrator
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -87,6 +87,84 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def _resolve_command_path(
+    definition: BotClientDefinition,
+    package_dir: Path,
+    fallback: Path | None,
+) -> Path:
+    if definition.command_file:
+        path = Path(definition.command_file)
+    elif fallback is not None:
+        path = fallback
+    else:
+        path = package_dir / "Test" / f"{definition.name}_commands.log"
+    if not path.is_absolute():
+        path = package_dir / path
+    path.parent.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _build_client(
+    definition: BotClientDefinition,
+    package_dir: Path,
+    args: argparse.Namespace,
+) -> DummyBotClient | WineSampClient:
+    command_path = _resolve_command_path(definition, package_dir, args.bot_command_file)
+    if definition.type.lower() == "wine":
+        gta_dir_value = definition.gta_directory or (args.gta_dir and str(args.gta_dir))
+        if gta_dir_value is None:
+            raise ValueError(
+                f"Definicja klienta {definition.name} wymaga pola 'gta_dir' lub parametru --gta-dir"
+            )
+        gta_dir = Path(gta_dir_value)
+        if not gta_dir.is_absolute():
+            gta_dir = package_dir / gta_dir
+        gta_dir.mkdir(parents=True, exist_ok=True)
+        launcher = definition.launcher or "samp.exe"
+        wine_binary = definition.wine_binary or args.wine_binary
+        return WineSampClient(
+            name=definition.name,
+            gta_directory=gta_dir,
+            launcher=launcher,
+            wine_binary=wine_binary,
+            command_file=command_path,
+            dry_run=definition.dry_run or args.bot_dry_run,
+            extra_env=definition.environment,
+            connect_delay=definition.connect_delay,
+            reset_commands_on_connect=definition.reset_commands_on_connect,
+        )
+
+    if definition.type.lower() == "buffer":
+        transport = BufferedCommandTransport()
+        return DummyBotClient(
+            name=definition.name,
+            transport=transport,
+            connect_delay=definition.connect_delay,
+        )
+
+    separator = definition.command_separator or "\n"
+    transport = FileCommandTransport(command_path, separator=separator)
+    return DummyBotClient(
+        name=definition.name,
+        transport=transport,
+        connect_delay=definition.connect_delay,
+    )
+
+
+def _fallback_client(args: argparse.Namespace, package_dir: Path) -> DummyBotClient | WineSampClient:
+    if args.gta_dir is not None:
+        return WineSampClient(
+            name="bot-1",
+            gta_directory=args.gta_dir,
+            wine_binary=args.wine_binary,
+            command_file=args.bot_command_file,
+            dry_run=args.bot_dry_run,
+        )
+    command_file = args.bot_command_file or package_dir / "Test" / "bot_commands.log"
+    transport = FileCommandTransport(command_file)
+    return DummyBotClient(name="bot-1", transport=transport)
+
+
 def main(argv: list[str] | None = None) -> Path:
     args = parse_args(argv)
     config_data = json.loads(args.config.read_text(encoding="utf-8"))
@@ -125,47 +203,57 @@ def main(argv: list[str] | None = None) -> Path:
             print("Brak scenariuszy botów do zapisania")
 
     if args.run_bot_tests:
+        package_dir = args.package_dir or args.output_dir
+        if not package_dir.exists():
+            raise FileNotFoundError(
+                "Do uruchomienia testów botów wymagany jest katalog paczki serwerowej"
+            )
+        plan = config.bot_automation_plan()
+        plan_contexts = plan.contexts(config.scenarios) if plan else []
         scripts = config.bot_scripts()
-        if not scripts:
+        if not plan_contexts and not scripts:
             print("Brak scenariuszy botów do uruchomienia")
         else:
-            package_dir = args.package_dir or args.output_dir
-            if not package_dir.exists():
-                raise FileNotFoundError(
-                    "Do uruchomienia testów botów wymagany jest katalog paczki serwerowej"
-                )
             server_controller = SampServerController(package_dir)
-            if args.gta_dir is not None:
-                client = WineSampClient(
-                    name="bot-1",
-                    gta_directory=args.gta_dir,
-                    wine_binary=args.wine_binary,
-                    command_file=args.bot_command_file,
-                    dry_run=args.bot_dry_run,
-                )
+            if plan and plan.clients:
+                clients = [_build_client(defn, package_dir, args) for defn in plan.clients]
             else:
-                command_file = args.bot_command_file or Path("Test/bot_commands.log")
-                transport = FileCommandTransport(command_file)
-                client = DummyBotClient(name="bot-1", transport=transport)
+                clients = [_fallback_client(args, package_dir)]
             orchestrator = TestOrchestrator(
-                clients=[client],
+                clients=clients,
                 scripts_dir=Path("tests/generated_scripts"),
                 server_controller=server_controller,
             )
-            for script in scripts:
-                saved_path = orchestrator.register_script(script)
-                result = orchestrator.run(script)
-                print(
-                    f"Uruchomiono scenariusz {script.description} (zapis: {saved_path})",
-                )
+            contexts: list[BotRunContext]
+            if plan_contexts:
+                contexts = plan_contexts
+            else:
+                contexts = [BotRunContext(script=script) for script in scripts]
+            registered: dict[str, Path] = {}
+            for context in contexts:
+                desc = context.script.description or "scenario"
+                if desc not in registered:
+                    registered[desc] = orchestrator.register_script(context.script)
+            results = orchestrator.run_suite(contexts)
+            for result in results:
+                saved_path = registered.get(result.script.description or "scenario")
+                header = f"Uruchomiono scenariusz {result.script.description}"
+                if saved_path is not None:
+                    header += f" (zapis: {saved_path})"
+                print(header)
                 for client_result in result.client_results:
                     if client_result.log is None:
                         print(f" - {client_result.client_name}: brak logu z przebiegu")
                     else:
-                        cmds = ", ".join(client_result.log.commands_sent())
+                        payloads = client_result.log.commands_sent()
                         print(
-                            f" - {client_result.client_name}: wysłano {len(client_result.log.events)} akcji ({cmds})"
+                            f" - {client_result.client_name}: wysłano {len(payloads)} komend ({', '.join(payloads)})"
                         )
+                if result.log_expectations:
+                    for expectation in result.log_expectations:
+                        status = "OK" if expectation.matched else "NIE ZNALEZIONO"
+                        print(f"   oczekiwanie logu '{expectation.phrase}': {status}")
+                print("---")
 
     return generated_path
 

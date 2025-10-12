@@ -124,6 +124,14 @@ class PlaybackLog:
 
 
 @dataclass(slots=True)
+class LogExpectationResult:
+    """Result of waiting for a specific phrase in the server log."""
+
+    phrase: str
+    matched: bool
+
+
+@dataclass(slots=True)
 class ClientRunResult:
     """Result returned by the orchestrator for a single client."""
 
@@ -137,9 +145,25 @@ class TestRunResult:
 
     script: BotScript
     client_results: tuple[ClientRunResult, ...]
+    log_expectations: tuple[LogExpectationResult, ...] = ()
 
     def successful_clients(self) -> list[str]:
         return [result.client_name for result in self.client_results if result.log is not None]
+
+    def logs_satisfied(self) -> bool:
+        return all(result.matched for result in self.log_expectations)
+
+
+@dataclass(slots=True)
+class BotRunContext:
+    """Definition of a single orchestrated run including expectations."""
+
+    script: BotScript
+    client_names: tuple[str, ...] = ()
+    expect_server_logs: tuple[str, ...] = ()
+    log_timeout: float = 15.0
+    iterations: int = 1
+    wait_after: float = 0.0
 
 
 class SampServerController:
@@ -155,6 +179,7 @@ class SampServerController:
         self.executable = executable or "samp-server"
         self.startup_phrase = startup_phrase
         self._process: subprocess.Popen[str] | None = None
+        self._log_monitor = ServerLogMonitor(self.package_dir / "server_log.txt")
 
     @property
     def server_address(self) -> str:
@@ -176,6 +201,7 @@ class SampServerController:
             binary = self.package_dir / binary
         if not binary.exists():
             raise FileNotFoundError(f"Nie znaleziono pliku wykonywalnego serwera: {binary}")
+        self._log_monitor.mark()
         self._process = subprocess.Popen(
             [str(binary)],
             cwd=self.package_dir,
@@ -224,6 +250,10 @@ class SampServerController:
         finally:
             self.stop()
 
+    @property
+    def log_monitor(self) -> "ServerLogMonitor":
+        return self._log_monitor
+
 
 class TestOrchestrator:
     """High level orchestrator that runs scripts against a server."""
@@ -235,6 +265,7 @@ class TestOrchestrator:
         server_controller: SampServerController | None = None,
     ) -> None:
         self.clients = list(clients)
+        self._client_lookup = {client.name: client for client in self.clients}
         self.scripts_dir = scripts_dir or Path("tests/scripts")
         self.scripts_dir.mkdir(parents=True, exist_ok=True)
         self.server_controller = server_controller
@@ -245,9 +276,25 @@ class TestOrchestrator:
         target.write_text(script.to_json(), encoding="utf-8")
         return target
 
-    def _run_on_clients(self, server_address: str, script: BotScript) -> list[ClientRunResult]:
+    def _select_clients(self, client_names: Sequence[str] | None) -> list[BotClient]:
+        if not client_names:
+            return list(self.clients)
+        selected: list[BotClient] = []
+        for name in client_names:
+            client = self._client_lookup.get(name)
+            if client is None:
+                raise KeyError(f"Brak klienta bota o nazwie {name}")
+            selected.append(client)
+        return selected
+
+    def _run_on_clients(
+        self,
+        server_address: str,
+        script: BotScript,
+        selected_clients: Sequence[BotClient],
+    ) -> list[ClientRunResult]:
         results: list[ClientRunResult] = []
-        for client in self.clients:
+        for client in selected_clients:
             client.connect(server_address)
             try:
                 log = client.execute_script(script)
@@ -256,19 +303,78 @@ class TestOrchestrator:
             results.append(ClientRunResult(client_name=client.name, log=log))
         return results
 
-    def run(self, script: BotScript, server_address: str | None = None) -> TestRunResult:
+    def _evaluate_expectations(
+        self,
+        expectations: Sequence[str],
+        timeout: float,
+        monitor: "ServerLogMonitor | None",
+    ) -> tuple[LogExpectationResult, ...]:
+        if not expectations:
+            return ()
+        if monitor is None:
+            raise ValueError("Brak monitora logów serwera do weryfikacji oczekiwań")
+        results: list[LogExpectationResult] = []
+        for phrase in expectations:
+            matched = monitor.wait_for(phrase, timeout=timeout)
+            results.append(LogExpectationResult(phrase=phrase, matched=matched))
+        return tuple(results)
+
+    def run(
+        self,
+        script: BotScript,
+        server_address: str | None = None,
+        client_names: Sequence[str] | None = None,
+        expect_server_logs: Sequence[str] | None = None,
+        log_timeout: float = 15.0,
+    ) -> TestRunResult:
         """Run the script across all configured clients."""
 
+        selected_clients = self._select_clients(client_names)
+        expectations = tuple(expect_server_logs or ())
         if server_address:
-            results = self._run_on_clients(server_address, script)
-            return TestRunResult(script=script, client_results=tuple(results))
+            results = self._run_on_clients(server_address, script, selected_clients)
+            log_expectations = self._evaluate_expectations(expectations, log_timeout, None)
+            return TestRunResult(
+                script=script,
+                client_results=tuple(results),
+                log_expectations=log_expectations,
+            )
 
         if self.server_controller is None:
             raise ValueError("Brak kontrolera serwera oraz adresu — nie można uruchomić testu")
 
         with self.server_controller.running() as controller:
-            results = self._run_on_clients(controller.server_address, script)
-        return TestRunResult(script=script, client_results=tuple(results))
+            monitor = controller.log_monitor
+            monitor.mark()
+            results = self._run_on_clients(controller.server_address, script, selected_clients)
+            log_expectations = self._evaluate_expectations(expectations, log_timeout, monitor)
+        return TestRunResult(
+            script=script,
+            client_results=tuple(results),
+            log_expectations=log_expectations,
+        )
+
+    def run_suite(
+        self,
+        runs: Sequence[BotRunContext],
+        server_address: str | None = None,
+    ) -> list[TestRunResult]:
+        """Execute a sequence of orchestrated runs, respecting iterations and waits."""
+
+        results: list[TestRunResult] = []
+        for run in runs:
+            for iteration in range(max(1, run.iterations)):
+                result = self.run(
+                    run.script,
+                    server_address=server_address,
+                    client_names=run.client_names,
+                    expect_server_logs=run.expect_server_logs,
+                    log_timeout=run.log_timeout,
+                )
+                results.append(result)
+                if run.wait_after > 0 and iteration + 1 < run.iterations:
+                    time.sleep(run.wait_after)
+        return results
 
 
 TestOrchestrator.__test__ = False  # type: ignore[attr-defined]
@@ -282,6 +388,44 @@ __all__ = [
     "SampServerController",
     "PlaybackLog",
     "PlaybackEvent",
+    "LogExpectationResult",
     "ClientRunResult",
     "TestRunResult",
+    "BotRunContext",
+    "ServerLogMonitor",
 ]
+
+
+class ServerLogMonitor:
+    """Utility for tailing server_log.txt and searching for phrases."""
+
+    def __init__(self, log_path: Path) -> None:
+        self.log_path = log_path
+        self._offset = 0
+
+    def _read(self) -> str:
+        if not self.log_path.exists():
+            return ""
+        return self.log_path.read_text(encoding="utf-8", errors="ignore")
+
+    def snapshot(self) -> str:
+        return self._read()
+
+    def mark(self) -> None:
+        content = self._read()
+        self._offset = len(content)
+
+    def wait_for(self, phrase: str, timeout: float = 10.0, poll_interval: float = 0.5) -> bool:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            content = self._read()
+            segment = content[self._offset :]
+            if phrase in segment:
+                self._offset = len(content)
+                return True
+            self._offset = len(content)
+            time.sleep(poll_interval)
+        return False
+
+    def contains(self, phrase: str) -> bool:
+        return phrase in self._read()

@@ -249,6 +249,45 @@
       ]
     }
   ],
+  "bot_automation": {
+    "clients": [
+      {
+        "name": "dummy_suite",
+        "type": "dummy",
+        "command_file": "Test/patrol_suite.log",
+        "command_separator": "\n",
+        "connect_delay": 0.1
+      },
+      {
+        "name": "wine_suite",
+        "type": "wine",
+        "gta_dir": "Test/gta_stub",
+        "launcher": "samp.exe",
+        "wine_binary": "wine",
+        "dry_run": true,
+        "command_file": "Test/wine_suite_commands.txt",
+        "reset_commands_on_connect": true,
+        "environment": {"WINEDEBUG": "-all"}
+      }
+    ],
+    "runs": [
+      {
+        "scenario": "police_patrol",
+        "clients": ["dummy_suite"],
+        "expect_server_logs": ["Player connected"],
+        "log_timeout": 5.0,
+        "iterations": 1
+      },
+      {
+        "scenario": "heist_briefing",
+        "clients": ["dummy_suite", "wine_suite"],
+        "expect_server_logs": ["[AutoRP]"],
+        "log_timeout": 10.0,
+        "iterations": 2,
+        "wait_after": 1.0
+      }
+    ]
+  },
   "achievements": [
     {
       "name": "Pierwsza Służba",
