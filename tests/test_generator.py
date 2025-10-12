@@ -1,5 +1,6 @@
 import json
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -130,4 +131,44 @@ def test_cli_exports_bot_scripts(tmp_path: Path, monkeypatch):
     assert files, "expected at least one bot script"
     data = read_json(files[0])
     assert "commands" in data
-    assert any(cmd.startswith("/dolacz") for cmd in data["commands"]) 
+    assert any(cmd.startswith("/dolacz") for cmd in data["commands"])
+
+
+def test_cli_runs_bot_tests(tmp_path: Path, monkeypatch):
+    config_path = Path("configs/sample_config.json")
+    package_dir = tmp_path / "server"
+    command_file = tmp_path / "commands.log"
+
+    def fake_print(*args, **kwargs):  # pragma: no cover - silence prints
+        return None
+
+    @contextmanager
+    def fake_running(self, timeout: float = 20.0):
+        class DummyController:
+            server_address = "127.0.0.1:7777"
+
+        yield DummyController()
+
+    class FakeController:
+        def __init__(self, package_dir: Path, *args, **kwargs):
+            self.package_dir = package_dir
+
+        def running(self, timeout: float = 20.0):
+            return fake_running(self, timeout)
+
+    monkeypatch.setattr("builtins.print", fake_print)
+    monkeypatch.setattr("tools.autorp.cli.SampServerController", FakeController)
+
+    main(
+        [
+            str(config_path),
+            "--package-dir",
+            str(package_dir),
+            "--run-bot-tests",
+            "--bot-command-file",
+            str(command_file),
+        ]
+    )
+
+    assert command_file.exists()
+    assert command_file.read_text(encoding="utf-8").strip(), "expected commands to be written"

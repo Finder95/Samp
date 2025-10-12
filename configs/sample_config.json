@@ -231,7 +231,21 @@
         {"type": "chat", "message": "Dzień dobry, rozpoczynam patrol."},
         {"type": "command", "value": "/dolacz_police"},
         {"type": "wait", "seconds": 1.5},
+        {"type": "teleport", "x": 1568.2, "y": -1711.4, "z": 13.4},
         {"type": "command", "value": "/szpital"}
+      ]
+    },
+    {
+      "name": "heist_briefing",
+      "description": "Dwóch funkcjonariuszy przygotowuje odprawę przed napadem próbny",
+      "steps": [
+        {"type": "command", "value": "/heist_poczta"},
+        {"type": "wait", "seconds": 2},
+        {"type": "chat", "message": "Sprawdzamy zabezpieczenia i kamery."},
+        {"type": "command", "value": "/wanted"},
+        {"type": "teleport", "x": 1484.42, "y": -1772.11, "z": 18.8, "interior": 0, "world": 0},
+        {"type": "wait", "seconds": 1},
+        {"type": "chat", "message": "Zespół drugi, potwierdź gotowość."}
       ]
     }
   ],

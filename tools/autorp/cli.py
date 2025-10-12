@@ -5,8 +5,10 @@ import argparse
 import json
 from pathlib import Path
 
+from .bots import DummyBotClient, FileCommandTransport, WineSampClient
 from .config import GamemodeConfig
 from .generator import GamemodeGenerator
+from .tester import SampServerController, TestOrchestrator
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -54,6 +56,34 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Jeśli podano, zapisze wygenerowane scenariusze botów w katalogu",
     )
+    parser.add_argument(
+        "--run-bot-tests",
+        action="store_true",
+        help="Po wygenerowaniu gamemode uruchom scenariusze botów przeciwko serwerowi",
+    )
+    parser.add_argument(
+        "--gta-dir",
+        type=Path,
+        default=None,
+        help="Katalog instalacji GTA:SA/SA-MP używany przez klienta bota",
+    )
+    parser.add_argument(
+        "--wine-binary",
+        type=str,
+        default="wine",
+        help="Binarna nazwa polecenia Wine uruchamiającego klienta (domyślnie wine)",
+    )
+    parser.add_argument(
+        "--bot-command-file",
+        type=Path,
+        default=None,
+        help="Ścieżka do pliku komend przekazywanych do klienta (opcjonalnie)",
+    )
+    parser.add_argument(
+        "--bot-dry-run",
+        action="store_true",
+        help="Nie uruchamiaj rzeczywistego klienta SA-MP, tylko zapisuj komendy do pliku",
+    )
     return parser.parse_args(argv)
 
 
@@ -93,6 +123,49 @@ def main(argv: list[str] | None = None) -> Path:
                 print(f" - {path}")
         else:
             print("Brak scenariuszy botów do zapisania")
+
+    if args.run_bot_tests:
+        scripts = config.bot_scripts()
+        if not scripts:
+            print("Brak scenariuszy botów do uruchomienia")
+        else:
+            package_dir = args.package_dir or args.output_dir
+            if not package_dir.exists():
+                raise FileNotFoundError(
+                    "Do uruchomienia testów botów wymagany jest katalog paczki serwerowej"
+                )
+            server_controller = SampServerController(package_dir)
+            if args.gta_dir is not None:
+                client = WineSampClient(
+                    name="bot-1",
+                    gta_directory=args.gta_dir,
+                    wine_binary=args.wine_binary,
+                    command_file=args.bot_command_file,
+                    dry_run=args.bot_dry_run,
+                )
+            else:
+                command_file = args.bot_command_file or Path("Test/bot_commands.log")
+                transport = FileCommandTransport(command_file)
+                client = DummyBotClient(name="bot-1", transport=transport)
+            orchestrator = TestOrchestrator(
+                clients=[client],
+                scripts_dir=Path("tests/generated_scripts"),
+                server_controller=server_controller,
+            )
+            for script in scripts:
+                saved_path = orchestrator.register_script(script)
+                result = orchestrator.run(script)
+                print(
+                    f"Uruchomiono scenariusz {script.description} (zapis: {saved_path})",
+                )
+                for client_result in result.client_results:
+                    if client_result.log is None:
+                        print(f" - {client_result.client_name}: brak logu z przebiegu")
+                    else:
+                        cmds = ", ".join(client_result.log.commands_sent())
+                        print(
+                            f" - {client_result.client_name}: wysłano {len(client_result.log.events)} akcji ({cmds})"
+                        )
 
     return generated_path
 

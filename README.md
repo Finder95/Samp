@@ -42,7 +42,9 @@ gospodarką RP.
 - opcjonalna kompilacja do pliku AMX (wymagany `pawncc` w systemie);
 - orkiestrator testów zdolny do uruchamiania lokalnego serwera SA-MP i sterowania botami;
 - generowanie scenariuszy botów na podstawie konfiguracji (plików JSON) gotowych do
-  wykorzystania przez narzędzia QA.
+  wykorzystania przez narzędzia QA;
+- biblioteka klientów botów w `tools.autorp.bots` z obsługą plikowych kolejek komend,
+  tłumaczeniem akcji scenariuszy i integracją z klientem SA-MP uruchamianym przez Wine.
 
 ### Szybki start
 1. Przygotuj konfigurację (przykład w `configs/sample_config.json`).
@@ -65,11 +67,36 @@ gospodarką RP.
    Każdy scenariusz opisany w sekcji `bot_scenarios` konfiguracji zostanie zapisany jako osobny
    plik JSON zawierający sekwencję kroków do odpalenia w orchestratorze testów.
 
+5. (Opcjonalnie) uruchom automatyczne testy botów bezpośrednio po wygenerowaniu paczki:
+   ```bash
+   python -m tools.autorp.cli \
+       configs/sample_config.json \
+       --package-dir build/server \
+       --run-bot-tests \
+       --gta-dir /sciezka/do/instalacji/gta \
+       --bot-command-file build/server/bot_commands.txt
+   ```
+   Powyższe polecenie uruchomi lokalny serwer SA-MP, wystartuje klienta przez Wine i wyśle
+   kroki scenariusza na podstawie konfiguracji. Użyj przełącznika `--bot-dry-run`, aby
+   zamiast prawdziwego klienta zapisywać komendy do pliku i symulować odtwarzanie.
+
 ### Automatyczne testy botów
 Moduł `tools.autorp.tester` udostępnia klasę `TestOrchestrator`, która potrafi uruchomić
 lokalny serwer SA-MP (klasa `SampServerController`), zapisać scenariusze botów na dysk i
-wykonać je na zadanych klientach (implementujących interfejs `BotClient`). Dzięki temu
-można łatwo zintegrować scenariusze e2e z pipeline CI/CD.
+wykonać je na zadanych klientach (implementujących interfejs `BotClient`).
+
+Moduł `tools.autorp.bots` zawiera gotowe implementacje klientów:
+
+- `WineSampClient` – uruchamia prawdziwego klienta SA-MP przez Wine i komunikuje się z nim
+  poprzez plik `bot_commands.txt` (domyślnie w katalogu gry);
+- `FileCommandTransport` oraz `ScriptRunner` – pozwalają tworzyć własne integracje z
+  makrami lub CLEO, tłumacząc akcje scenariuszy (`wait`, `chat`, `teleport`, komendy) na
+  rzeczywiste instrukcje;
+- `DummyBotClient` – lekka implementacja do testów jednostkowych lub środowisk CI, która
+  zapisuje sekwencje komend bez uruchamiania GTA:SA.
+
+Każdy przebieg scenariusza zwraca `PlaybackLog` z wysłanymi akcjami i znacznikami czasu,
+co ułatwia asercję i diagnostykę pipeline'u QA.
 
 ### Testy
 ```bash

@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 import subprocess
 import time
-from typing import Iterable, Protocol
+from typing import Iterable, Protocol, Sequence
 
 
 class BotClient(Protocol):
@@ -18,11 +18,54 @@ class BotClient(Protocol):
     def connect(self, server_address: str) -> None:
         """Connect the client to the provided SA-MP server."""
 
-    def execute_script(self, script: "BotScript") -> None:
-        """Execute a scripted sequence inside the game world."""
+    def execute_script(self, script: "BotScript") -> "PlaybackLog | None":
+        """Execute a scripted sequence inside the game world and optionally return a log."""
 
     def disconnect(self) -> None:
         """Disconnect the client from the server."""
+
+
+@dataclass(slots=True)
+class ScriptAction:
+    """Normalised representation of a single action for the client player."""
+
+    type: str
+    payload: dict[str, object]
+    delay: float = 0.0
+
+    @property
+    def command(self) -> str | None:
+        value = self.payload.get("command")
+        return str(value) if value is not None else None
+
+    @property
+    def message(self) -> str | None:
+        value = self.payload.get("message")
+        return str(value) if value is not None else None
+
+    def serialise(self) -> dict[str, object]:
+        data = {"type": self.type, **self.payload}
+        if self.delay and "seconds" not in data:
+            data["delay"] = self.delay
+        return data
+
+
+def _normalise_action(raw: dict[str, object]) -> ScriptAction:
+    action_type = str(raw.get("type", "command"))
+    payload = {key: value for key, value in raw.items() if key != "type"}
+    delay = 0.0
+    if action_type == "wait":
+        seconds = payload.get("seconds", payload.get("value", 1.0))
+        try:
+            delay = float(seconds)
+        except (TypeError, ValueError):  # pragma: no cover - defensive
+            delay = 1.0
+    elif "delay" in payload:
+        try:
+            delay = float(payload.get("delay", 0))
+        except (TypeError, ValueError):  # pragma: no cover - defensive
+            delay = 0.0
+    return ScriptAction(type=action_type, payload=payload, delay=delay)
 
 
 @dataclass(slots=True)
@@ -38,9 +81,65 @@ class BotScript:
             {
                 "description": self.description,
                 "commands": list(self.commands),
-                "actions": list(self.actions),
+                "actions": [dict(action) for action in self.actions],
             }
         )
+
+    @classmethod
+    def from_json(cls, payload: str | bytes | bytearray) -> "BotScript":
+        data = json.loads(payload)
+        return cls(
+            description=data.get("description", ""),
+            commands=tuple(data.get("commands", ()) or ()),
+            actions=tuple(data.get("actions", ()) or ()),
+        )
+
+    def iter_actions(self) -> Sequence[ScriptAction]:
+        if self.actions:
+            return tuple(_normalise_action(dict(raw)) for raw in self.actions)
+        return tuple(ScriptAction(type="command", payload={"command": command}) for command in self.commands)
+
+
+@dataclass(slots=True)
+class PlaybackEvent:
+    """Record of a single event during bot playback."""
+
+    action: ScriptAction
+    command_payloads: tuple[str, ...]
+    timestamp: float
+
+
+@dataclass(slots=True)
+class PlaybackLog:
+    """Lightweight execution log returned by clients after running a script."""
+
+    script_description: str
+    events: tuple[PlaybackEvent, ...]
+
+    def commands_sent(self) -> list[str]:
+        payloads: list[str] = []
+        for event in self.events:
+            payloads.extend(event.command_payloads)
+        return payloads
+
+
+@dataclass(slots=True)
+class ClientRunResult:
+    """Result returned by the orchestrator for a single client."""
+
+    client_name: str
+    log: PlaybackLog | None
+
+
+@dataclass(slots=True)
+class TestRunResult:
+    """Summary of a completed orchestrated run."""
+
+    script: BotScript
+    client_results: tuple[ClientRunResult, ...]
+
+    def successful_clients(self) -> list[str]:
+        return [result.client_name for result in self.client_results if result.log is not None]
 
 
 class SampServerController:
@@ -146,24 +245,43 @@ class TestOrchestrator:
         target.write_text(script.to_json(), encoding="utf-8")
         return target
 
-    def _run_on_clients(self, server_address: str, script: BotScript) -> None:
+    def _run_on_clients(self, server_address: str, script: BotScript) -> list[ClientRunResult]:
+        results: list[ClientRunResult] = []
         for client in self.clients:
             client.connect(server_address)
-            client.execute_script(script)
-            client.disconnect()
+            try:
+                log = client.execute_script(script)
+            finally:
+                client.disconnect()
+            results.append(ClientRunResult(client_name=client.name, log=log))
+        return results
 
-    def run(self, script: BotScript, server_address: str | None = None) -> None:
+    def run(self, script: BotScript, server_address: str | None = None) -> TestRunResult:
         """Run the script across all configured clients."""
 
         if server_address:
-            self._run_on_clients(server_address, script)
-            return
+            results = self._run_on_clients(server_address, script)
+            return TestRunResult(script=script, client_results=tuple(results))
 
         if self.server_controller is None:
             raise ValueError("Brak kontrolera serwera oraz adresu — nie można uruchomić testu")
 
         with self.server_controller.running() as controller:
-            self._run_on_clients(controller.server_address, script)
+            results = self._run_on_clients(controller.server_address, script)
+        return TestRunResult(script=script, client_results=tuple(results))
 
 
-__all__ = ["BotScript", "TestOrchestrator", "BotClient", "SampServerController"]
+TestOrchestrator.__test__ = False  # type: ignore[attr-defined]
+
+
+__all__ = [
+    "BotScript",
+    "ScriptAction",
+    "TestOrchestrator",
+    "BotClient",
+    "SampServerController",
+    "PlaybackLog",
+    "PlaybackEvent",
+    "ClientRunResult",
+    "TestRunResult",
+]
