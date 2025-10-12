@@ -7,8 +7,9 @@ gamemodu RolePlay dla SA-MP – od pliku Pawn, przez konfigurację serwera, aż 
 automatycznych testów z wykorzystaniem botów sterujących klientem GTA:SA.
 
 Konfiguracja (w formacie JSON) opisuje cały świat gry: frakcje, pojazdy, zadania, pickupy,
-nieruchomości z punktami wejścia/wyjścia, NPC-ów z dialogami oraz harmonogramy zdarzeń.
-AutoRP tłumaczy je na gotowe struktury Pawn, timery i komendy zarządzające gospodarką RP.
+nieruchomości z punktami wejścia/wyjścia, biznesy, questy, receptury rzemieślnicze,
+osiągnięcia, cykle pogody oraz NPC-ów z dialogami i harmonogramami zdarzeń. AutoRP
+tłumaczy je na gotowe struktury Pawn, timery i komendy zarządzające gospodarką RP.
 
 ### Najważniejsze funkcje
 - elastyczna konfiguracja w JSON-ie opisująca frakcje, punkty odrodzeń, pojazdy,
@@ -17,8 +18,14 @@ AutoRP tłumaczy je na gotowe struktury Pawn, timery i komendy zarządzające go
   pakietów startowych, ekonomii, ekwipunku oraz logów inicjalizacyjnych;
 - automatyczne przygotowanie nieruchomości z pickupami i komendami zakupu oraz NPC-ów
   z konfigurowalnymi dialogami i kontrolą dostępu frakcyjnego;
+- generowanie biznesów z pickupami informacyjnymi, komendami zakupów i kontrolą pracy
+  frakcji lub stanowiska;
+- system questów narracyjnych i osiągnięć wraz z komendami pomocniczymi oraz nagrodami;
 - definiowanie cyklicznych eventów (np. premie służbowe, loterie) wykonywanych poprzez
   timery wraz z broadcastami, komendami RCON oraz nagrodami pieniężnymi;
+- wsparcie dla recept rzemieślniczych i automatycznych komunikatów o brakujących
+  mechanikach serwerowych, aby łatwo rozszerzyć bazowy kod Pawn;
+- dynamiczny cykl pogody z timerem rotującym warunki w grze oraz broadcastami dla graczy;
 - przygotowanie kompletnej paczki serwerowej (`server.cfg`, metadane) jednym poleceniem;
 - opcjonalna kompilacja do pliku AMX (wymagany `pawncc` w systemie);
 - orkiestrator testów zdolny do uruchamiania lokalnego serwera SA-MP i sterowania botami;

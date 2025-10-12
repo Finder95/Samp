@@ -36,6 +36,12 @@ def test_generator_creates_file(tmp_path: Path, monkeypatch):
     assert "/kup_komisariat" in content
     assert "CreateActor(280" in content
     assert "HandleScheduledEvent_PAYDAY" in content
+    assert "StartQuest" in content
+    assert "/quest_policja" in content
+    assert "PlayerAchievements" in content
+    assert "/craft_apteczka" in content
+    assert "ApplyWeatherStage" in content
+    assert "gBusinessPickups" in content
 
 
 def test_cli_prepares_server_package(tmp_path: Path, monkeypatch):
@@ -64,6 +70,11 @@ def test_cli_prepares_server_package(tmp_path: Path, monkeypatch):
     assert "Komisariat Downtown" in metadata["properties"]
     assert "Oficer Kowalski" in metadata["npcs"]
     assert "payday" in metadata["events"]
+    assert "Rekrutacja Policyjna" in metadata["quests"]
+    assert "Sklep Elektroniczny" in metadata["businesses"]
+    assert "Apteczka Zaawansowana" in metadata["crafting_recipes"]
+    assert "Pierwsza Służba" in metadata["achievements"]
+    assert metadata["weather_cycle"] == [2, 1, 8]
 
     pawn_content = gamemode_path.read_text(encoding="utf-8")
     assert "AddStaticVehicleEx(596" in pawn_content
@@ -73,6 +84,10 @@ def test_cli_prepares_server_package(tmp_path: Path, monkeypatch):
     assert "gPropertyPickups" in pawn_content
     assert "SendClientMessageToAll(0x33AA33FF, \"[Event] Automatyczny bonus służbowy został wypłacony.\");" in pawn_content
     assert "SetTimer(\"HandleScheduledEvent_PAYDAY\"" in pawn_content
+    assert "HandleBusinessPurchase" in pawn_content
+    assert "/quest_policja" in pawn_content
+    assert "/craft_apteczka" in pawn_content
+    assert "ApplyWeatherStage" in pawn_content
 
 
 def test_cli_exports_bot_scripts(tmp_path: Path, monkeypatch):

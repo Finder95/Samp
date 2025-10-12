@@ -559,6 +559,517 @@ class ScheduledEvent:
 
 
 @dataclass(slots=True)
+class QuestStep:
+    """Single step inside a quest chain."""
+
+    description: str
+    hint: str | None = None
+    teleport: TeleportAction | None = None
+    reward_money: int = 0
+    give_item: str | None = None
+    take_item: str | None = None
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "QuestStep":
+        teleport = data.get("teleport")
+        return cls(
+            description=data.get("description", ""),
+            hint=data.get("hint"),
+            teleport=TeleportAction(**teleport) if teleport else None,
+            reward_money=data.get("reward_money", 0),
+            give_item=data.get("give_item"),
+            take_item=data.get("take_item"),
+        )
+
+    def array_entry(self) -> str:
+        description = escape_pawn_string(self.description)
+        hint = escape_pawn_string(self.hint or "")
+        has_teleport = 1 if self.teleport else 0
+        if self.teleport:
+            x, y, z = self.teleport.x, self.teleport.y, self.teleport.z
+            interior = self.teleport.interior
+            world = self.teleport.world
+        else:
+            x = y = z = 0.0
+            interior = 0
+            world = 0
+        reward = self.reward_money or 0
+        give_item = escape_pawn_string(self.give_item or "")
+        take_item = escape_pawn_string(self.take_item or "")
+        return (
+            "    {"
+            f'"{description}", "{hint}", {has_teleport}, '
+            f"{x}, {y}, {z}, {interior}, {world}, {reward}, "
+            f'"{give_item}", "{take_item}"'
+            "}"
+        )
+
+
+@dataclass(slots=True)
+class Quest:
+    """Narrative quest consisting of a series of steps."""
+
+    name: str
+    description: str
+    steps: Sequence[QuestStep]
+    start_command: str | None = None
+    required_faction: str | None = None
+    reward_money: int = 0
+    reward_item: str | None = None
+    completion_message: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.start_command and not self.start_command.startswith("/"):
+            self.start_command = "/" + self.start_command
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Quest":
+        steps = [QuestStep.from_dict(step) for step in data.get("steps", [])]
+        command = data.get("start_command")
+        if not command:
+            command = "/quest_" + sanitize_identifier(data.get("name", "quest")).lower()
+        return cls(
+            name=data.get("name", "Quest"),
+            description=data.get("description", ""),
+            steps=tuple(steps),
+            start_command=command,
+            required_faction=data.get("required_faction"),
+            reward_money=data.get("reward_money", 0),
+            reward_item=data.get("reward_item"),
+            completion_message=data.get("completion_message"),
+        )
+
+    @property
+    def constant(self) -> str:
+        return f"QUEST_{sanitize_identifier(self.name)}"
+
+    def command_trigger(self) -> str:
+        return self.start_command or ("/quest_" + sanitize_identifier(self.name).lower())
+
+    def array_entry(self, factions: dict[str, Faction], step_start: int) -> str:
+        name = escape_pawn_string(self.name)
+        description = escape_pawn_string(self.description)
+        command = escape_pawn_string(self.command_trigger())
+        faction_constant = "INVALID_FACTION"
+        if self.required_faction:
+            faction = factions.get(self.required_faction)
+            if faction:
+                faction_constant = faction.constant
+        reward_item = escape_pawn_string(self.reward_item or "")
+        completion = escape_pawn_string(self.completion_message or "")
+        return (
+            "    {"
+            f'"{name}", "{description}", "{command}", {faction_constant}, '
+            f"{self.reward_money}, "
+            f'"{reward_item}", "{completion}", {step_start}, {len(self.steps)}'
+            "}"
+        )
+
+    def step_entries(self) -> list[str]:
+        return [step.array_entry() for step in self.steps]
+
+    def offset_entry(self, step_start: int) -> str:
+        return f"    {{{step_start}, {len(self.steps)}}}"
+
+    def command_block(self, prefix: str, factions: dict[str, Faction]) -> list[str]:
+        trigger = escape_pawn_string(self.command_trigger())
+        block = [f"{prefix}(!strcmp(cmdtext, \"{trigger}\", true))", "{"]
+        if self.required_faction:
+            faction = factions.get(self.required_faction)
+            if faction:
+                block.extend(
+                    [
+                        f"    if (PlayerFaction[playerid] != {faction.constant})",
+                        "    {",
+                        '        SendClientMessage(playerid, 0xAA3333FF, "Ta misja wymaga odpowiedniej frakcji.");',
+                        "        return 1;",
+                        "    }",
+                    ]
+                )
+        block.extend(
+            [
+                f"    StartQuest(playerid, {self.constant});",
+                "    return 1;",
+                "}",
+            ]
+        )
+        return block
+
+
+@dataclass(slots=True)
+class Business:
+    """Interactive business with pickup information and purchase flow."""
+
+    name: str
+    type: str
+    product: str
+    price: int
+    stock: int = 0
+    x: float = 0.0
+    y: float = 0.0
+    z: float = 0.0
+    interior: int = 0
+    world: int = 0
+    pickup_model: int = 1274
+    pickup_type: int = 1
+    pickup_respawn: int = 30
+    command: str | None = None
+    required_faction: str | None = None
+    required_job: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.command and not self.command.startswith("/"):
+            self.command = "/" + self.command
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Business":
+        return cls(
+            name=data.get("name", "Biznes"),
+            type=data.get("type", "Sklep"),
+            product=data.get("product", "Towar"),
+            price=data.get("price", 0),
+            stock=data.get("stock", 0),
+            x=data.get("x", 0.0),
+            y=data.get("y", 0.0),
+            z=data.get("z", 0.0),
+            interior=data.get("interior", 0),
+            world=data.get("world", 0),
+            pickup_model=data.get("pickup_model", 1274),
+            pickup_type=data.get("pickup_type", 1),
+            pickup_respawn=data.get("pickup_respawn", 30),
+            command=data.get("command"),
+            required_faction=data.get("required_faction"),
+            required_job=data.get("required_job"),
+        )
+
+    @property
+    def constant(self) -> str:
+        return f"BUSINESS_{sanitize_identifier(self.name)}"
+
+    def command_trigger(self) -> str:
+        if self.command:
+            return self.command
+        return f"/biznes_{sanitize_identifier(self.name).lower()}"
+
+    def array_entry(self, factions: dict[str, Faction], jobs: dict[str, "Job"]) -> str:
+        name = escape_pawn_string(self.name)
+        btype = escape_pawn_string(self.type)
+        product = escape_pawn_string(self.product)
+        faction_constant = "INVALID_FACTION"
+        if self.required_faction:
+            faction = factions.get(self.required_faction)
+            if faction:
+                faction_constant = faction.constant
+        job_constant = "JOB_NONE"
+        if self.required_job:
+            job = jobs.get(self.required_job)
+            if job:
+                job_constant = job.constant
+        command = escape_pawn_string(self.command_trigger())
+        return (
+            "    {"
+            f'"{name}", "{btype}", "{product}", {self.price}, {self.stock}, '
+            f"{self.x}, {self.y}, {self.z}, {self.interior}, {self.world}, {self.pickup_model}, "
+            f"{self.pickup_type}, {self.pickup_respawn}, {faction_constant}, {job_constant}, "
+            f'"{command}"'
+            "}"
+        )
+
+    def setup_lines(self) -> list[str]:
+        return [
+            f"    gBusinessPickups[{self.constant}] = CreatePickup({self.pickup_model}, {self.pickup_type}, {self.x}, {self.y}, {self.z}, {self.world}, {self.pickup_respawn});",
+            f'    printf("[AutoRP] Biznes aktywny: %s", gBusinesses[{self.constant}][BusinessName]);',
+        ]
+
+    def command_block(self, prefix: str, factions: dict[str, Faction], jobs: dict[str, "Job"]) -> list[str]:
+        trigger = escape_pawn_string(self.command_trigger())
+        block = [f"{prefix}(!strcmp(cmdtext, \"{trigger}\", true))", "{"]
+        if self.required_faction:
+            faction = factions.get(self.required_faction)
+            if faction:
+                block.extend(
+                    [
+                        f"    if (PlayerFaction[playerid] != {faction.constant})",
+                        "    {",
+                        '        SendClientMessage(playerid, 0xAA3333FF, "To przedsiębiorstwo należy do innej frakcji.");',
+                        "        return 1;",
+                        "    }",
+                    ]
+                )
+        if self.required_job:
+            job = jobs.get(self.required_job)
+            if job:
+                block.extend(
+                    [
+                        f"    if (PlayerJob[playerid] != {job.constant})",
+                        "    {",
+                        '        SendClientMessage(playerid, 0xAA3333FF, "Najpierw dołącz do wymaganej pracy.");',
+                        "        return 1;",
+                        "    }",
+                    ]
+                )
+        block.extend(
+            [
+                f"    HandleBusinessPurchase(playerid, {self.constant});",
+                "    return 1;",
+                "}",
+            ]
+        )
+        return block
+
+
+@dataclass(slots=True)
+class CraftingIngredient:
+    """Single ingredient required for a crafting recipe."""
+
+    item: str
+    quantity: int = 1
+
+    @classmethod
+    def from_dict(cls, data: dict | str) -> "CraftingIngredient":
+        if isinstance(data, str):
+            return cls(item=data, quantity=1)
+        return cls(item=data.get("item", ""), quantity=data.get("quantity", 1))
+
+    def summary(self) -> str:
+        return f"{self.quantity}x {self.item}"
+
+
+@dataclass(slots=True)
+class CraftingRecipe:
+    """Definition of a crafting recipe accessible via command."""
+
+    name: str
+    description: str
+    inputs: Sequence[CraftingIngredient]
+    output_item: str
+    output_quantity: int = 1
+    command: str | None = None
+    required_job: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.command and not self.command.startswith("/"):
+            self.command = "/" + self.command
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "CraftingRecipe":
+        ingredients = [
+            CraftingIngredient.from_dict(ing)
+            for ing in data.get("inputs", [])
+        ]
+        command = data.get("command")
+        if not command:
+            command = "/craft_" + sanitize_identifier(data.get("name", "recipe")).lower()
+        return cls(
+            name=data.get("name", "Przepis"),
+            description=data.get("description", ""),
+            inputs=tuple(ingredients),
+            output_item=data.get("output_item", ""),
+            output_quantity=data.get("output_quantity", 1),
+            command=command,
+            required_job=data.get("required_job"),
+        )
+
+    def command_trigger(self) -> str:
+        return self.command or ("/craft_" + sanitize_identifier(self.name).lower())
+
+    def array_entry(self, jobs: dict[str, "Job"]) -> str:
+        name = escape_pawn_string(self.name)
+        description = escape_pawn_string(self.description)
+        command = escape_pawn_string(self.command_trigger())
+        output_item = escape_pawn_string(self.output_item)
+        job_constant = "JOB_NONE"
+        if self.required_job:
+            job = jobs.get(self.required_job)
+            if job:
+                job_constant = job.constant
+        summary = escape_pawn_string(
+            ", ".join(ingredient.summary() for ingredient in self.inputs)
+        )
+        return (
+            "    {"
+            f'"{name}", "{description}", "{command}", "{summary}", '
+            f'"{output_item}", {self.output_quantity}, {job_constant}'
+            "}"
+        )
+
+    def command_block(self, prefix: str, jobs: dict[str, "Job"]) -> list[str]:
+        trigger = escape_pawn_string(self.command_trigger())
+        block = [f"{prefix}(!strcmp(cmdtext, \"{trigger}\", true))", "{"]
+        if self.required_job:
+            job = jobs.get(self.required_job)
+            if job:
+                block.extend(
+                    [
+                        f"    if (PlayerJob[playerid] != {job.constant})",
+                        "    {",
+                        '        SendClientMessage(playerid, 0xAA3333FF, "Wymagana jest odpowiednia praca do wytwarzania.");',
+                        "        return 1;",
+                        "    }",
+                    ]
+                )
+        name = escape_pawn_string(self.name)
+        description = escape_pawn_string(self.description)
+        output_item = escape_pawn_string(self.output_item)
+        block.append(
+            f'    SendClientMessage(playerid, 0x33AA33FF, "Przepis: {name} -> {self.output_quantity}x {output_item}");'
+        )
+        if description:
+            block.append(
+                f'    SendClientMessage(playerid, 0xFFFFFFFF, "{description}");'
+            )
+        for ingredient in self.inputs:
+            summary = escape_pawn_string(ingredient.summary())
+            block.append(
+                f'    SendClientMessage(playerid, 0xCCCCCCFF, "- {summary}");'
+            )
+        block.extend(
+            [
+                '    SendClientMessage(playerid, 0x8888FFFF, "System magazynu i składników wymaga implementacji serwerowej.");',
+                "    return 1;",
+                "}",
+            ]
+        )
+        return block
+
+
+@dataclass(slots=True)
+class Achievement:
+    """Simple achievement unlocked via command or scripted event."""
+
+    name: str
+    description: str
+    reward_money: int = 0
+    announce_global: bool = False
+    command: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.command and not self.command.startswith("/"):
+            self.command = "/" + self.command
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Achievement":
+        command = data.get("command")
+        if not command:
+            command = "/achievement_" + sanitize_identifier(data.get("name", "achievement")).lower()
+        return cls(
+            name=data.get("name", "Osiągnięcie"),
+            description=data.get("description", ""),
+            reward_money=data.get("reward_money", 0),
+            announce_global=bool(data.get("announce_global", False)),
+            command=command,
+        )
+
+    @property
+    def constant(self) -> str:
+        return f"ACHIEVEMENT_{sanitize_identifier(self.name)}"
+
+    def command_trigger(self) -> str:
+        return self.command or ("/achievement_" + sanitize_identifier(self.name).lower())
+
+    def array_entry(self) -> str:
+        name = escape_pawn_string(self.name)
+        description = escape_pawn_string(self.description)
+        announce = 1 if self.announce_global else 0
+        return (
+            "    {"
+            f'"{name}", "{description}", {self.reward_money}, {announce}'
+            "}"
+        )
+
+    def command_block(self, index: int, prefix: str) -> list[str]:
+        trigger = escape_pawn_string(self.command_trigger())
+        block = [f"{prefix}(!strcmp(cmdtext, \"{trigger}\", true))", "{"]
+        block.extend(
+            [
+                f"    if (PlayerAchievements[playerid][{index}])",
+                "    {",
+                '        SendClientMessage(playerid, 0xAAAAAAFF, "To osiągnięcie zostało już odebrane.");',
+                "        return 1;",
+                "    }",
+                f"    PlayerAchievements[playerid][{index}] = true;",
+                "    new msg[144];",
+                f'    format(msg, sizeof(msg), "Zdobywasz osiągnięcie: %s", gAchievements[{index}][AchievementName]);',
+                "    SendClientMessage(playerid, 0xFFD700FF, msg);",
+                f"    if (gAchievements[{index}][AchievementRewardMoney] > 0)",
+                "    {",
+                f"        GivePlayerMoney(playerid, gAchievements[{index}][AchievementRewardMoney]);",
+                "    }",
+                "    if (gAchievements[{index}][AchievementAnnounceGlobal])",
+                "    {",
+                "        new pname[MAX_PLAYER_NAME];",
+                "        GetPlayerName(playerid, pname, sizeof(pname));",
+                "        new announce[188];",
+                f'        format(announce, sizeof(announce), "[AutoRP] %s zdobył osiągnięcie %s!", pname, gAchievements[{index}][AchievementName]);',
+                "        SendClientMessageToAll(0xFFD700FF, announce);",
+                "    }",
+                "    return 1;",
+                "}",
+            ]
+        )
+        return block
+
+
+@dataclass(slots=True)
+class WeatherStage:
+    """Single stage of a dynamic weather cycle."""
+
+    hour: int
+    weather: int
+    duration_minutes: int
+    description: str | None = None
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "WeatherStage":
+        return cls(
+            hour=data.get("hour", 12),
+            weather=data.get("weather", data.get("weather_id", 1)),
+            duration_minutes=data.get("duration_minutes", data.get("duration", 15)),
+            description=data.get("description"),
+        )
+
+    def array_entry(self) -> str:
+        description = escape_pawn_string(self.description or "")
+        return (
+            "    {"
+            f"{self.hour}, {self.weather}, {self.duration_minutes}, "
+            f'"{description}"'
+            "}"
+        )
+
+
+@dataclass(slots=True)
+class WeatherCycle:
+    """Collection of weather stages that will rotate automatically."""
+
+    stages: Sequence[WeatherStage]
+
+    @classmethod
+    def from_dict(cls, data: dict | Sequence[dict]) -> "WeatherCycle":
+        if isinstance(data, dict) and "stages" in data:
+            stage_data = data.get("stages", [])
+        else:
+            stage_data = data
+        stages = [WeatherStage.from_dict(stage) for stage in stage_data or []]
+        return cls(stages=tuple(stages))
+
+    def array_definition(self) -> str:
+        if not self.stages:
+            return "new gWeatherStages[][eWeatherStageData] = {};"
+        body = ",\n".join(stage.array_entry() for stage in self.stages)
+        return (
+            "new gWeatherStages[][eWeatherStageData] = {\n"
+            f"{body}\n"
+            "};"
+        )
+
+    def setup_lines(self) -> list[str]:
+        if not self.stages:
+            return ["printf(\"[AutoRP] Brak zdefiniowanego cyklu pogody\");"]
+        return ["ApplyWeatherStage(0);"]
+
+
+@dataclass(slots=True)
 class BotScenarioDefinition:
     """Configuration of a bot scenario to be materialised as a BotScript."""
 
@@ -661,6 +1172,11 @@ class GamemodeConfig:
     properties: Sequence[Property] = field(default_factory=list)
     npcs: Sequence[Npc] = field(default_factory=list)
     events: Sequence[ScheduledEvent] = field(default_factory=list)
+    quests: Sequence[Quest] = field(default_factory=list)
+    businesses: Sequence[Business] = field(default_factory=list)
+    crafting_recipes: Sequence[CraftingRecipe] = field(default_factory=list)
+    achievements: Sequence[Achievement] = field(default_factory=list)
+    weather_cycle: WeatherCycle | None = None
     server_settings: ServerSettings = field(default_factory=ServerSettings)
     world_settings: WorldSettings = field(default_factory=WorldSettings)
     economy: EconomySettings = field(default_factory=EconomySettings)
@@ -687,6 +1203,22 @@ class GamemodeConfig:
         properties = [Property.from_dict(p) for p in data.get("properties", [])]
         npcs = [Npc(**npc) for npc in data.get("npcs", [])]
         events = [ScheduledEvent.from_dict(e) for e in data.get("events", [])]
+        quests = [Quest.from_dict(q) for q in data.get("quests", [])]
+        businesses = [Business.from_dict(b) for b in data.get("businesses", [])]
+        crafting_recipes = [
+            CraftingRecipe.from_dict(recipe)
+            for recipe in data.get("crafting", [])
+        ]
+        achievements = [
+            Achievement.from_dict(achievement)
+            for achievement in data.get("achievements", [])
+        ]
+        weather_cycle_data = data.get("weather_cycle")
+        weather_cycle = (
+            WeatherCycle.from_dict(weather_cycle_data)
+            if weather_cycle_data
+            else None
+        )
         scenarios = [BotScenarioDefinition.from_dict(s) for s in data.get("bot_scenarios", [])]
         server_settings = ServerSettings(**data.get("server", {}))
         world_settings = WorldSettings(**data.get("world", {}))
@@ -709,6 +1241,11 @@ class GamemodeConfig:
             properties=properties,
             npcs=npcs,
             events=events,
+            quests=quests,
+            businesses=businesses,
+            crafting_recipes=crafting_recipes,
+            achievements=achievements,
+            weather_cycle=weather_cycle,
             scenarios=scenarios,
             server_settings=server_settings,
             world_settings=world_settings,
@@ -721,6 +1258,9 @@ class GamemodeConfig:
 
     def faction_lookup(self) -> dict[str, Faction]:
         return {f.name: f for f in self.factions}
+
+    def job_lookup(self) -> dict[str, Job]:
+        return {job.name: job for job in self.jobs}
 
     def _default_faction_constant(self) -> str:
         if not self.factions:
@@ -795,14 +1335,26 @@ class GamemodeConfig:
                     command_lines[2:2] = guard
             lines.extend(command_lines)
 
+        quest_lines = self._quest_command_lines("if" if not lines else "else if")
+        lines.extend(quest_lines)
+
         job_lines = self._job_command_lines("if" if not lines else "else if")
         lines.extend(job_lines)
+
+        crafting_lines = self._crafting_command_lines("if" if not lines else "else if")
+        lines.extend(crafting_lines)
 
         property_lines = self._property_command_lines("if" if not lines else "else if")
         lines.extend(property_lines)
 
+        business_lines = self._business_command_lines("if" if not lines else "else if")
+        lines.extend(business_lines)
+
         npc_lines = self._npc_command_lines("if" if not lines else "else if")
         lines.extend(npc_lines)
+
+        achievement_lines = self._achievement_command_lines("if" if not lines else "else if")
+        lines.extend(achievement_lines)
         if not lines:
             return ["// Brak zdefiniowanych komend", "return 0;"]
         lines.append("return 0;")
@@ -931,7 +1483,7 @@ class GamemodeConfig:
 
     def _property_pickup_handlers(self) -> list[str]:
         if not self.properties:
-            return ["    return 1; // Brak nieruchomości"]
+            return ["    return 0; // Brak nieruchomości"]
         return [
             "    for (new i = 0; i < PROPERTY_COUNT; i++)",
             "    {",
@@ -944,7 +1496,7 @@ class GamemodeConfig:
             "            return 1;",
             "        }",
             "    }",
-            "    return 1;",
+            "    return 0;",
         ]
 
     def _property_command_lines(self, initial_prefix: str) -> list[str]:
@@ -990,6 +1542,329 @@ class GamemodeConfig:
             lines.extend(block)
             prefix = "else if"
         return lines
+
+    def _quest_enum(self) -> str:
+        if not self.quests:
+            return "enum eQuestId {\n    QUEST_NONE = -1,\n    QUEST_COUNT = 0\n};"
+        entries = ["QUEST_NONE = -1"] + [quest.constant for quest in self.quests] + ["QUEST_COUNT"]
+        formatted = ",\n    ".join(entries)
+        return "enum eQuestId {\n    " + formatted + "\n};"
+
+    def _quest_definitions(self) -> str:
+        factions = self.faction_lookup()
+        lines = [
+            "enum eQuestData {",
+            "    QuestName[48],",
+            "    QuestDescription[144],",
+            "    QuestCommand[32],",
+            "    QuestRequiredFaction,",
+            "    QuestRewardMoney,",
+            "    QuestRewardItem[32],",
+            "    QuestCompletionMessage[96],",
+            "    QuestStepStart,",
+            "    QuestStepCount",
+            "};",
+        ]
+        entries: list[str] = []
+        step_start = 0
+        for quest in self.quests:
+            entries.append(quest.array_entry(factions, step_start))
+            step_start += len(quest.steps)
+        body = ",\n".join(entries) if entries else ""
+        array_lines = [
+            "new gQuests[][eQuestData] = {",
+            body,
+            "};" if entries else "};",
+        ]
+        if not entries:
+            array_lines = ["new gQuests[][eQuestData] = {};"]
+        return "\n".join(lines + array_lines)
+
+    def _quest_step_definitions(self) -> str:
+        lines = [
+            "enum eQuestStepData {",
+            "    QuestStepDescription[128],",
+            "    QuestStepHint[64],",
+            "    QuestStepHasTeleport,",
+            "    Float:QuestStepX,",
+            "    Float:QuestStepY,",
+            "    Float:QuestStepZ,",
+            "    QuestStepInterior,",
+            "    QuestStepWorld,",
+            "    QuestStepRewardMoney,",
+            "    QuestStepGiveItem[32],",
+            "    QuestStepTakeItem[32]",
+            "};",
+        ]
+        entries = [step for quest in self.quests for step in quest.step_entries()]
+        if not entries:
+            array_lines = ["new gQuestSteps[][eQuestStepData] = {};"]
+        else:
+            body = ",\n".join(entries)
+            array_lines = [
+                "new gQuestSteps[][eQuestStepData] = {",
+                body,
+                "};",
+            ]
+        return "\n".join(lines + array_lines)
+
+    def _quest_step_offsets(self) -> str:
+        if not self.quests:
+            return "new gQuestStepOffsets[][2] = {};"
+        offsets: list[str] = []
+        step_start = 0
+        for quest in self.quests:
+            offsets.append(quest.offset_entry(step_start))
+            step_start += len(quest.steps)
+        body = ",\n".join(offsets)
+        return "new gQuestStepOffsets[][2] = {\n" + body + "\n};"
+
+    def _quest_setup_lines(self) -> list[str]:
+        if not self.quests:
+            return ["printf(\"[AutoRP] Brak questów do inicjalizacji\");"]
+        return [
+            "printf(\"[AutoRP] Dostępnych questów: %d\", sizeof(gQuests));",
+        ]
+
+    def _quest_command_lines(self, initial_prefix: str) -> list[str]:
+        if not self.quests:
+            return []
+        factions = self.faction_lookup()
+        lines: list[str] = []
+        prefix = initial_prefix
+        for quest in self.quests:
+            block = quest.command_block(prefix, factions)
+            lines.extend(block)
+            prefix = "else if"
+        progress_trigger = escape_pawn_string("/questpostep")
+        lines.extend(
+            [
+                f"{prefix}(!strcmp(cmdtext, \"{progress_trigger}\", true))",
+                "{",
+                "    if (PlayerQuest[playerid] == QUEST_NONE)",
+                "    {",
+                '        SendClientMessage(playerid, 0xAAAAAAFF, "Nie masz aktywnego questa.");',
+                "        return 1;",
+                "    }",
+                "    ShowQuestProgress(playerid, PlayerQuest[playerid]);",
+                "    return 1;",
+                "}",
+            ]
+        )
+        prefix = "else if"
+        complete_trigger = escape_pawn_string("/questzakoncz")
+        lines.extend(
+            [
+                f"{prefix}(!strcmp(cmdtext, \"{complete_trigger}\", true))",
+                "{",
+                "    if (PlayerQuest[playerid] == QUEST_NONE)",
+                "    {",
+                '        SendClientMessage(playerid, 0xAAAAAAFF, "Nie masz aktywnego questa do zakończenia.");',
+                "        return 1;",
+                "    }",
+                "    CompleteQuest(playerid, PlayerQuest[playerid]);",
+                "    return 1;",
+                "}",
+            ]
+        )
+        return lines
+
+    def _business_enum(self) -> str:
+        if not self.businesses:
+            return "enum eBusinessId {\n    BUSINESS_COUNT = 0\n};"
+        entries = [biz.constant for biz in self.businesses] + ["BUSINESS_COUNT"]
+        formatted = ",\n    ".join(entries)
+        return "enum eBusinessId {\n    " + formatted + "\n};"
+
+    def _business_definitions(self) -> str:
+        lines = [
+            "enum eBusinessData {",
+            "    BusinessName[48],",
+            "    BusinessType[32],",
+            "    BusinessProduct[32],",
+            "    BusinessPrice,",
+            "    BusinessStock,",
+            "    Float:BusinessX,",
+            "    Float:BusinessY,",
+            "    Float:BusinessZ,",
+            "    BusinessInterior,",
+            "    BusinessWorld,",
+            "    BusinessPickupModel,",
+            "    BusinessPickupType,",
+            "    BusinessPickupRespawn,",
+            "    BusinessRequiredFaction,",
+            "    BusinessRequiredJob,",
+            "    BusinessCommand[32]",
+            "};",
+        ]
+        entries = [
+            business.array_entry(self.faction_lookup(), self.job_lookup())
+            for business in self.businesses
+        ]
+        if not entries:
+            array_lines = ["new gBusinesses[][eBusinessData] = {};"]
+        else:
+            body = ",\n".join(entries)
+            array_lines = [
+                "new gBusinesses[][eBusinessData] = {",
+                body,
+                "};",
+            ]
+        return "\n".join(lines + array_lines)
+
+    def _business_pickup_array(self) -> str:
+        if not self.businesses:
+            return "// Brak biznesów - brak pickupów"
+        return "new gBusinessPickups[sizeof(gBusinesses)];"
+
+    def _business_setup_lines(self) -> list[str]:
+        if not self.businesses:
+            return ["printf(\"[AutoRP] Brak biznesów do inicjalizacji\");"]
+        lines: list[str] = []
+        for business in self.businesses:
+            lines.extend(business.setup_lines())
+        return lines
+
+    def _business_pickup_function_lines(self) -> list[str]:
+        if not self.businesses:
+            return ["    return 0;"]
+        return [
+            "    for (new i = 0; i < BUSINESS_COUNT; i++)",
+            "    {",
+            "        if (gBusinessPickups[i] == pickupid)",
+            "        {",
+            "            new info[160];",
+            "            format(info, sizeof(info), \"Biznes: %s - produkt: %s (%d$)\", gBusinesses[i][BusinessName], gBusinesses[i][BusinessProduct], gBusinesses[i][BusinessPrice]);",
+            "            SendClientMessage(playerid, 0x55C1FFFF, info);",
+            "            return 1;",
+            "        }",
+            "    }",
+            "    return 0;",
+        ]
+
+    def _business_command_lines(self, initial_prefix: str) -> list[str]:
+        if not self.businesses:
+            return []
+        factions = self.faction_lookup()
+        jobs = self.job_lookup()
+        lines: list[str] = []
+        prefix = initial_prefix
+        for business in self.businesses:
+            block = business.command_block(prefix, factions, jobs)
+            lines.extend(block)
+            prefix = "else if"
+        return lines
+
+    def _crafting_definitions(self) -> str:
+        lines = [
+            "enum eCraftingData {",
+            "    CraftingName[48],",
+            "    CraftingDescription[128],",
+            "    CraftingCommand[32],",
+            "    CraftingInputs[96],",
+            "    CraftingOutput[32],",
+            "    CraftingOutputCount,",
+            "    CraftingRequiredJob",
+            "};",
+        ]
+        entries = [
+            recipe.array_entry(self.job_lookup()) for recipe in self.crafting_recipes
+        ]
+        if not entries:
+            array_lines = ["new gCraftingRecipes[][eCraftingData] = {};"]
+        else:
+            body = ",\n".join(entries)
+            array_lines = [
+                "new gCraftingRecipes[][eCraftingData] = {",
+                body,
+                "};",
+            ]
+        return "\n".join(lines + array_lines)
+
+    def _crafting_setup_lines(self) -> list[str]:
+        if not self.crafting_recipes:
+            return ["printf(\"[AutoRP] Brak przepisów rzemieślniczych\");"]
+        return [
+            "printf(\"[AutoRP] Ładowanie przepisów: %d\", sizeof(gCraftingRecipes));",
+        ]
+
+    def _crafting_command_lines(self, initial_prefix: str) -> list[str]:
+        if not self.crafting_recipes:
+            return []
+        jobs = self.job_lookup()
+        lines: list[str] = []
+        prefix = initial_prefix
+        for recipe in self.crafting_recipes:
+            block = recipe.command_block(prefix, jobs)
+            lines.extend(block)
+            prefix = "else if"
+        return lines
+
+    def _achievement_enum(self) -> str:
+        if not self.achievements:
+            return "enum eAchievementId {\n    ACHIEVEMENT_COUNT = 0\n};"
+        entries = [ach.constant for ach in self.achievements] + ["ACHIEVEMENT_COUNT"]
+        formatted = ",\n    ".join(entries)
+        return "enum eAchievementId {\n    " + formatted + "\n};"
+
+    def _achievement_definitions(self) -> str:
+        lines = [
+            "enum eAchievementData {",
+            "    AchievementName[48],",
+            "    AchievementDescription[128],",
+            "    AchievementRewardMoney,",
+            "    AchievementAnnounceGlobal",
+            "};",
+        ]
+        entries = [achievement.array_entry() for achievement in self.achievements]
+        if not entries:
+            array_lines = ["new gAchievements[][eAchievementData] = {};"]
+        else:
+            body = ",\n".join(entries)
+            array_lines = [
+                "new gAchievements[][eAchievementData] = {",
+                body,
+                "};",
+            ]
+        return "\n".join(lines + array_lines)
+
+    def _achievement_setup_lines(self) -> list[str]:
+        if not self.achievements:
+            return ["printf(\"[AutoRP] Brak osiągnięć do inicjalizacji\");"]
+        return [
+            "printf(\"[AutoRP] Zarejestrowano osiągnięcia: %d\", sizeof(gAchievements));",
+        ]
+
+    def _achievement_command_lines(self, initial_prefix: str) -> list[str]:
+        if not self.achievements:
+            return []
+        lines: list[str] = []
+        prefix = initial_prefix
+        for index, achievement in enumerate(self.achievements):
+            block = achievement.command_block(index, prefix)
+            lines.extend(block)
+            prefix = "else if"
+        return lines
+
+    def _weather_stage_definitions(self) -> str:
+        lines = [
+            "enum eWeatherStageData {",
+            "    WeatherStageHour,",
+            "    WeatherStageWeather,",
+            "    WeatherStageDurationMinutes,",
+            "    WeatherStageDescription[64]",
+            "};",
+        ]
+        if not self.weather_cycle:
+            array_lines = ["new gWeatherStages[][eWeatherStageData] = {};"]
+        else:
+            array_lines = [self.weather_cycle.array_definition()]
+        return "\n".join(lines + array_lines)
+
+    def _weather_setup_lines(self) -> list[str]:
+        if not self.weather_cycle:
+            return ["printf(\"[AutoRP] Korzystanie z statycznych ustawień pogody\");"]
+        return self.weather_cycle.setup_lines()
 
     def _event_forwards(self) -> str:
         if not self.events:
@@ -1042,13 +1917,23 @@ class GamemodeConfig:
             "properties": [prop.name for prop in self.properties],
             "npcs": [npc.name for npc in self.npcs],
             "events": [event.name for event in self.events],
+            "quests": [quest.name for quest in self.quests],
+            "businesses": [business.name for business in self.businesses],
+            "crafting_recipes": [recipe.name for recipe in self.crafting_recipes],
+            "achievements": [achievement.name for achievement in self.achievements],
+            "weather_cycle": [stage.weather for stage in self.weather_cycle.stages]
+            if self.weather_cycle
+            else [],
         }
         return json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
 
     def pawn_context(self) -> dict:
-        property_pickup_handlers = "\n".join(self._property_pickup_handlers())
-        if property_pickup_handlers:
-            property_pickup_handlers += "\n"
+        property_pickup_handlers = indent_lines(
+            self._property_pickup_handlers(), level=1
+        )
+        business_pickup_handlers = indent_lines(
+            self._business_pickup_function_lines(), level=1
+        )
         event_handlers = self._event_handlers()
         if event_handlers:
             event_handlers += "\n"
@@ -1088,9 +1973,26 @@ class GamemodeConfig:
             "property_pickup_array": self._property_pickup_array(),
             "property_setup": indent_lines(self._property_setup_lines(), level=1),
             "property_pickup_handlers": property_pickup_handlers,
+            "quest_enum": self._quest_enum(),
+            "quest_definitions": self._quest_definitions(),
+            "quest_step_definitions": self._quest_step_definitions(),
+            "quest_step_offsets": self._quest_step_offsets(),
+            "quest_setup": indent_lines(self._quest_setup_lines(), level=1),
+            "business_enum": self._business_enum(),
+            "business_definitions": self._business_definitions(),
+            "business_pickup_array": self._business_pickup_array(),
+            "business_setup": indent_lines(self._business_setup_lines(), level=1),
+            "business_pickup_handlers": business_pickup_handlers,
             "npc_enum": self._npc_enum(),
             "npc_actor_array": self._npc_actor_array(),
             "npc_setup": indent_lines(self._npc_setup_lines(), level=1),
+            "crafting_definitions": self._crafting_definitions(),
+            "crafting_setup": indent_lines(self._crafting_setup_lines(), level=1),
+            "achievement_enum": self._achievement_enum(),
+            "achievement_definitions": self._achievement_definitions(),
+            "achievement_setup": indent_lines(self._achievement_setup_lines(), level=1),
+            "weather_stage_definitions": self._weather_stage_definitions(),
+            "weather_setup": indent_lines(self._weather_setup_lines(), level=1),
             "event_forwards": self._event_forwards(),
             "event_setup": indent_lines(self._event_setup_lines(), level=1),
             "event_handlers": event_handlers,
@@ -1115,5 +2017,13 @@ __all__ = [
     "PropertyPoint",
     "Npc",
     "ScheduledEvent",
+    "Quest",
+    "QuestStep",
+    "Business",
+    "CraftingRecipe",
+    "CraftingIngredient",
+    "Achievement",
+    "WeatherStage",
+    "WeatherCycle",
     "BotScenarioDefinition",
 ]

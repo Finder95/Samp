@@ -20,7 +20,8 @@
   "items": [
     {"name": "Apteczka", "description": "Jednorazowe wyleczenie 50HP", "price": 250, "weight": 0.4},
     {"name": "Radio", "description": "Komunikacja głosowa frakcji", "price": 150, "weight": 0.2},
-    {"name": "Laptop", "description": "Dostęp do panelu frakcyjnego", "price": 1200, "weight": 2.0}
+    {"name": "Laptop", "description": "Dostęp do panelu frakcyjnego", "price": 1200, "weight": 2.0},
+    {"name": "Bandaz", "description": "Podstawowy opatrunek jednorazowy", "price": 35, "weight": 0.05}
   ],
   "jobs": [
     {
@@ -69,6 +70,44 @@
       "interior": {"x": 203.63, "y": 75.19, "z": 1005.26, "world": 2, "interior": 3, "angle": 0.0}
     }
   ],
+  "businesses": [
+    {
+      "name": "Sklep Elektroniczny",
+      "type": "Sklep",
+      "product": "Radio Policyjne",
+      "price": 350,
+      "stock": 12,
+      "x": 1550.42,
+      "y": -1670.35,
+      "z": 16.2,
+      "world": 0,
+      "interior": 0,
+      "pickup_model": 1276,
+      "pickup_type": 1,
+      "pickup_respawn": 45,
+      "command": "/kup_radio",
+      "required_faction": "Policja",
+      "required_job": "Policjant"
+    },
+    {
+      "name": "Apteka Centralna",
+      "type": "Apteka",
+      "product": "Zestaw Leków",
+      "price": 220,
+      "stock": 20,
+      "x": 1176.48,
+      "y": -1321.92,
+      "z": 14.55,
+      "world": 0,
+      "interior": 0,
+      "pickup_model": 1279,
+      "pickup_type": 1,
+      "pickup_respawn": 40,
+      "command": "/kup_leki",
+      "required_faction": "Medycy",
+      "required_job": "Ratownik"
+    }
+  ],
   "npcs": [
     {
       "name": "Oficer Kowalski",
@@ -94,6 +133,36 @@
       "dialogue": [
         "Trzymaj apteczkę i pamiętaj o uzupełnianiu leków.",
         "Mamy dziś sporo zgłoszeń z centrum miasta."
+      ],
+      "command": "/rozmowa_medycy"
+    }
+  ],
+  "quests": [
+    {
+      "name": "Rekrutacja Policyjna",
+      "description": "Krótki ciąg zadań wprowadzający nowych funkcjonariuszy.",
+      "start_command": "/quest_policja",
+      "required_faction": "Policja",
+      "reward_money": 750,
+      "reward_item": "Radio",
+      "completion_message": "Gratulacje! Uzyskałeś pełne uprawnienia patrolowe.",
+      "steps": [
+        {"description": "Zgłoś się do oficera Kowalskiego przy recepcji.", "hint": "Użyj /rozmowa_policja aby rozpocząć dialog."},
+        {"description": "Odbierz radiowóz z garażu.", "teleport": {"x": 1560.8, "y": -1670.2, "z": 16.2}, "hint": "Podejdź do policyjnego garażu.", "reward_money": 150},
+        {"description": "Zamelduj się na kanale radiowym.", "hint": "Wpisz /sluzba, aby rozpocząć służbę."}
+      ]
+    },
+    {
+      "name": "Dyżur Medyczny",
+      "description": "Instruktaż dla świeżo przyjętych ratowników.",
+      "required_faction": "Medycy",
+      "reward_money": 600,
+      "reward_item": "Apteczka",
+      "completion_message": "Twoja zmiana dobiegła końca - świetna robota!",
+      "steps": [
+        {"description": "Spotkaj się z Doktorem Nowakiem w ambulatorium.", "hint": "Użyj /rozmowa_medycy aby odebrać instrukcje."},
+        {"description": "Zabezpiecz zapasy w ambulansie.", "teleport": {"x": 1185.12, "y": -1328.44, "z": 13.68}, "give_item": "Bandaz"},
+        {"description": "Dostarcz pacjenta do szpitala.", "hint": "Dowieź figuranta NPC lub skorzystaj z trybu testowego."}
       ]
     }
   ],
@@ -127,6 +196,32 @@
       ]
     }
   ],
+  "crafting": [
+    {
+      "name": "Apteczka Zaawansowana",
+      "description": "Połącz standardową apteczkę z dodatkowymi bandażami.",
+      "inputs": [
+        {"item": "Apteczka", "quantity": 1},
+        {"item": "Bandaz", "quantity": 3}
+      ],
+      "output_item": "Apteczka Zaawansowana",
+      "output_quantity": 1,
+      "command": "/craft_apteczka",
+      "required_job": "Ratownik"
+    },
+    {
+      "name": "Pakiet Policyjny",
+      "description": "Zestaw wyposażenia do szybkiego patrolu.",
+      "inputs": [
+        {"item": "Radio", "quantity": 1},
+        {"item": "Bandaz", "quantity": 2}
+      ],
+      "output_item": "Pakiet Patrolowy",
+      "output_quantity": 1,
+      "command": "/craft_patrol",
+      "required_job": "Policjant"
+    }
+  ],
   "bot_scenarios": [
     {
       "name": "police_patrol",
@@ -138,6 +233,20 @@
         {"type": "wait", "seconds": 1.5},
         {"type": "command", "value": "/szpital"}
       ]
+    }
+  ],
+  "achievements": [
+    {
+      "name": "Pierwsza Służba",
+      "description": "Rozpocznij służbę w swojej frakcji.",
+      "reward_money": 200,
+      "announce_global": true,
+      "command": "/achievement_sluzba"
+    },
+    {
+      "name": "Ratunek Dnia",
+      "description": "Udziel pomocy trzem poszkodowanym w jednej sesji.",
+      "reward_money": 300
     }
   ],
   "events": [
@@ -158,6 +267,11 @@
       "grant_money": 150,
       "rcon_command": "echo [AutoRP] Przeprowadzono loterię"
     }
+  ],
+  "weather_cycle": [
+    {"hour": 8, "weather": 2, "duration_minutes": 45, "description": "Poranna mgła ustępuje słońcu."},
+    {"hour": 12, "weather": 1, "duration_minutes": 60, "description": "Słoneczne południe nad miastem."},
+    {"hour": 19, "weather": 8, "duration_minutes": 30, "description": "Wieczorne zachmurzenie z delikatnym deszczem."}
   ],
   "economy": {
     "base_paycheck": 600,
