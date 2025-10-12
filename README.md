@@ -8,9 +8,10 @@ automatycznych testów z wykorzystaniem botów sterujących klientem GTA:SA.
 
 Konfiguracja (w formacie JSON) opisuje cały świat gry: frakcje, pojazdy, zadania, pickupy,
 nieruchomości z punktami wejścia/wyjścia, biznesy, questy, receptury rzemieślnicze,
-osiągnięcia, system umiejętności z treningami, kontrolę terytoriów, cykle pogody oraz
-NPC-ów z dialogami i harmonogramami zdarzeń. AutoRP tłumaczy je na gotowe struktury Pawn,
-timery i komendy zarządzające gospodarką RP.
+osiągnięcia, system umiejętności z treningami, kontrolę terytoriów, system prawa z kodeksem,
+cykle pogody, trasy patroli, wieloetapowe heisty oraz NPC-ów z dialogami i harmonogramami
+zdarzeń. AutoRP tłumaczy je na gotowe struktury Pawn, timery i komendy zarządzające
+gospodarką RP.
 
 ### Najważniejsze funkcje
 - elastyczna konfiguracja w JSON-ie opisująca frakcje, punkty odrodzeń, pojazdy,
@@ -26,6 +27,12 @@ timery i komendy zarządzające gospodarką RP.
   przyznającymi doświadczenie z cooldownami;
 - dynamiczna kontrola terytoriów wraz z timerami przejęcia, nagrodami i broadcastami dla
   całego serwera;
+- kodeks wykroczeń oraz komendy /kodeks, /wanted i /zakoncz_patrol wspierające monitorowanie
+  reputacji graczy i egzekwowanie prawa podczas symulacji serwerowych;
+- generowanie tras patroli frakcyjnych z komendami startu/stopu, teleportami i odliczaniem
+  punktów kontrolnych;
+- wieloetapowe heisty treningowe z cooldownami, nagrodami pieniężnymi, komunikatami oraz
+  automatycznym naliczaniem poziomu poszukiwania;
 - definiowanie cyklicznych eventów (np. premie służbowe, loterie) wykonywanych poprzez
   timery wraz z broadcastami, komendami RCON oraz nagrodami pieniężnymi;
 - wsparcie dla recept rzemieślniczych i automatycznych komunikatów o brakujących

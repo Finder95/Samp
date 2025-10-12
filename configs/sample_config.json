@@ -322,6 +322,128 @@
       "broadcast_message": "Kontrola nad rynkiem usług medycznych została przejęta!"
     }
   ],
+  "law": {
+    "stop_patrol_command": "/zakoncz_patrol",
+    "violations": [
+      {
+        "code": "SPEEDING",
+        "name": "Przekroczenie prędkości",
+        "description": "Prowadzenie pojazdu z prędkością większą o ponad 30 km/h od dozwolonej.",
+        "severity": 1,
+        "fine": 500,
+        "jail_minutes": 0,
+        "reputation_penalty": 2
+      },
+      {
+        "code": "ILLEGALARMS",
+        "name": "Nielegalna broń",
+        "description": "Posiadanie niezarejestrowanej lub zabronionej broni palnej.",
+        "severity": 3,
+        "fine": 2500,
+        "jail_minutes": 12,
+        "reputation_penalty": 6
+      },
+      {
+        "code": "BANKROBBERY",
+        "name": "Napad na bank",
+        "description": "Udział w zorganizowanym napadzie na instytucję finansową.",
+        "severity": 5,
+        "fine": 7500,
+        "jail_minutes": 25,
+        "reputation_penalty": 12
+      }
+    ],
+    "patrol_routes": [
+      {
+        "name": "Downtown Patrol",
+        "faction": "Policja",
+        "loop": true,
+        "command": "/patrol_downtown",
+        "radio_message": "Jednostka 51 rozpoczyna obchód Downtown.",
+        "points": [
+          {"x": 1548.12, "y": -1678.44, "z": 13.56, "wait_seconds": 15},
+          {"x": 1603.45, "y": -1602.55, "z": 13.52, "wait_seconds": 18},
+          {"x": 1456.23, "y": -1584.30, "z": 13.50, "wait_seconds": 20},
+          {"x": 1502.11, "y": -1720.75, "z": 13.54, "wait_seconds": 16}
+        ]
+      },
+      {
+        "name": "Korytarz Medyczny",
+        "faction": "Medycy",
+        "loop": false,
+        "command": "/patrol_medyczny",
+        "radio_message": "Zespół ratunkowy Alfa zabezpiecza korytarz medyczny.",
+        "points": [
+          {"x": 1181.74, "y": -1322.18, "z": 13.56, "wait_seconds": 14},
+          {"x": 1232.88, "y": -1303.22, "z": 13.55, "wait_seconds": 20},
+          {"x": 1276.32, "y": -1382.48, "z": 13.48, "wait_seconds": 22}
+        ]
+      }
+    ]
+  },
+  "heists": [
+    {
+      "name": "Symulacja Napadu Downtown",
+      "location": "Skrytka bankowa przy Vinewood Plaza",
+      "cooldown_minutes": 45,
+      "required_players": 3,
+      "required_faction": "Policja",
+      "required_items": ["Pakiet Patrolowy", "Radio"],
+      "reward_money": 1800,
+      "reward_item": "Medal Służby",
+      "reward_reputation": 2,
+      "start_command": "/heist_bank",
+      "announcement": "Rozpoczyna się symulowany napad bankowy Downtown!",
+      "stages": [
+        {
+          "description": "Zabezpiecz dojazdy do banku i ustaw blokady.",
+          "time_limit": 45,
+          "success_message": "Blokady ustawione, teren zabezpieczony."
+        },
+        {
+          "description": "Przeprowadź szturm na skarbiec i unieszkodliw zagrożenie.",
+          "time_limit": 60,
+          "success_message": "Skarbiec przejęty, terroryści pojmani.",
+          "failure_message": "Szturm nie powiódł się, napad wymknął się spod kontroli!"
+        },
+        {
+          "description": "Ewakuuj cywilów oraz zabezpiecz dowody.",
+          "time_limit": 50,
+          "success_message": "Cywile uratowani, dowody zabezpieczone."
+        }
+      ]
+    },
+    {
+      "name": "Operacja Ewakuacja",
+      "location": "Wieżowiec konferencyjny Commerce",
+      "cooldown_minutes": 35,
+      "required_players": 2,
+      "required_faction": "Medycy",
+      "required_items": ["Apteczka Zaawansowana"],
+      "reward_money": 1200,
+      "reward_item": "Odznaka Ratownika",
+      "reward_reputation": 3,
+      "start_command": "/heist_ewakuacja",
+      "announcement": "Medycy rozpoczynają operację ewakuacji rannych z wieżowca!",
+      "stages": [
+        {
+          "description": "Utwórz mobilny punkt medyczny przy wejściu.",
+          "time_limit": 30,
+          "success_message": "Punkt medyczny w pełni funkcjonalny."
+        },
+        {
+          "description": "Zabezpiecz rannych na 20 piętrze i rozpocznij transport.",
+          "time_limit": 55,
+          "success_message": "Ranni w drodze do ambulansów."
+        },
+        {
+          "description": "Dostarcz poszkodowanych do szpitala polowego.",
+          "time_limit": 45,
+          "success_message": "Ewakuacja zakończona sukcesem, pacjenci bezpieczni."
+        }
+      ]
+    }
+  ],
   "events": [
     {
       "name": "payday",

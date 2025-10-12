@@ -7,6 +7,12 @@ $metadata_banner
 #define INVALID_FACTION (-1)
 #define QUEST_NONE (-1)
 #define SKILL_NONE (-1)
+#define INVALID_ROUTE (-1)
+#define INVALID_HEIST (-1)
+#define INVALID_TIMER (-1)
+#define LAW_VIOLATION_COUNT $law_violation_count
+#define PATROL_ROUTE_COUNT $patrol_route_count
+#define HEIST_COUNT $heist_count
 
 new const GAMEMODE_DESCRIPTION[] = "$description";
 
@@ -80,6 +86,16 @@ $territory_data_enum
 $territory_definitions
 #endif
 
+$law_violation_definitions
+
+$patrol_route_definitions
+
+$patrol_point_definitions
+
+$heist_definitions
+
+$heist_stage_definitions
+
 $weather_stage_definitions
 
 #define QUEST_COUNT (sizeof(gQuests))
@@ -91,6 +107,11 @@ new PlayerJob[MAX_PLAYERS];
 new PlayerQuest[MAX_PLAYERS];
 new PlayerQuestStep[MAX_PLAYERS];
 new bool:PlayerAchievements[MAX_PLAYERS][ACHIEVEMENT_COUNT];
+new PlayerWantedLevel[MAX_PLAYERS];
+new PlayerCrimePoints[MAX_PLAYERS];
+#if LAW_VIOLATION_COUNT > 0
+new PlayerLastViolation[MAX_PLAYERS];
+#endif
 #if SKILL_COUNT > 0
 new PlayerSkillLevel[MAX_PLAYERS][SKILL_COUNT];
 new PlayerSkillXp[MAX_PLAYERS][SKILL_COUNT];
@@ -104,6 +125,17 @@ new TerritoryCaptureProgress[TERRITORY_COUNT];
 new TerritoryCaptureFaction[TERRITORY_COUNT];
 new TerritoryCaptureTimers[TERRITORY_COUNT];
 new TerritoryCaptureStarter[TERRITORY_COUNT];
+#endif
+#if PATROL_ROUTE_COUNT > 0
+new PlayerActivePatrol[MAX_PLAYERS];
+new PlayerPatrolPoint[MAX_PLAYERS];
+new PlayerPatrolTimer[MAX_PLAYERS];
+#endif
+#if HEIST_COUNT > 0
+new PlayerActiveHeist[MAX_PLAYERS];
+new PlayerHeistStage[MAX_PLAYERS];
+new PlayerHeistTimer[MAX_PLAYERS];
+new HeistCooldowns[HEIST_COUNT];
 #endif
 
 enum eItemData {
@@ -148,6 +180,9 @@ forward SetupSkills();
 forward SetupSkillTrainings();
 forward SetupWeatherCycle();
 forward SetupTerritories();
+forward SetupLaw();
+forward SetupPatrols();
+forward SetupHeists();
 forward HandleJobPaycheck(playerid, salary);
 forward HandlePropertyPurchase(playerid, propertyid);
 forward HandlePropertyPickup(playerid, pickupid);
@@ -161,6 +196,14 @@ forward ApplyWeatherStage(stageIndex);
 forward StartTerritoryCapture(playerid, territoryid);
 forward AdvanceTerritoryCapture(territoryid, factionid);
 forward TickTerritories();
+forward ShowPlayerLawBook(playerid);
+forward ShowPlayerWantedLevel(playerid);
+forward StartPatrol(playerid, routeid, factionid);
+forward AdvancePatrol(playerid);
+forward StopPlayerPatrol(playerid);
+forward StartHeist(playerid, heistid, factionid);
+forward AdvanceHeistStage(playerid);
+forward CompleteHeist(playerid);
 $event_forwards
 
 public OnGameModeInit()
@@ -185,6 +228,9 @@ $world_setup
     SetupSkills();
     SetupSkillTrainings();
     SetupTerritories();
+    SetupLaw();
+    SetupPatrols();
+    SetupHeists();
     SetupWeatherCycle();
     SetupEvents();
     return 1;
@@ -312,6 +358,465 @@ $territory_setup
     return 1;
 }
 
+SetupLaw()
+{
+$law_setup
+#if LAW_VIOLATION_COUNT > 0
+    for (new i = 0; i < MAX_PLAYERS; i++)
+    {
+        PlayerLastViolation[i] = -1;
+    }
+#endif
+    return 1;
+}
+
+SetupPatrols()
+{
+$patrol_setup
+#if PATROL_ROUTE_COUNT > 0
+    for (new i = 0; i < MAX_PLAYERS; i++)
+    {
+        PlayerActivePatrol[i] = INVALID_ROUTE;
+        PlayerPatrolPoint[i] = 0;
+        PlayerPatrolTimer[i] = INVALID_TIMER;
+    }
+#endif
+    return 1;
+}
+
+SetupHeists()
+{
+$heist_setup
+#if HEIST_COUNT > 0
+    for (new i = 0; i < MAX_PLAYERS; i++)
+    {
+        PlayerActiveHeist[i] = INVALID_HEIST;
+        PlayerHeistStage[i] = 0;
+        PlayerHeistTimer[i] = INVALID_TIMER;
+    }
+    for (new h = 0; h < HEIST_COUNT; h++)
+    {
+        HeistCooldowns[h] = 0;
+    }
+#endif
+    return 1;
+}
+
+stock ResetPatrolState(playerid, bool:notify)
+{
+#if PATROL_ROUTE_COUNT > 0
+    if (PlayerPatrolTimer[playerid] != INVALID_TIMER)
+    {
+        KillTimer(PlayerPatrolTimer[playerid]);
+        PlayerPatrolTimer[playerid] = INVALID_TIMER;
+    }
+    if (PlayerActivePatrol[playerid] != INVALID_ROUTE)
+    {
+        DisablePlayerCheckpoint(playerid);
+        if (notify)
+        {
+            new msg[144];
+            format(msg, sizeof(msg), "[Patrol] Trasa %s zakończona.", gPatrolRoutes[PlayerActivePatrol[playerid]][PatrolRouteName]);
+            SendClientMessage(playerid, 0x4CAF50FF, msg);
+        }
+    }
+    PlayerActivePatrol[playerid] = INVALID_ROUTE;
+    PlayerPatrolPoint[playerid] = 0;
+#else
+    notify = notify;
+#endif
+}
+
+stock ApplyNextPatrolPoint(playerid)
+{
+#if PATROL_ROUTE_COUNT > 0
+    new route = PlayerActivePatrol[playerid];
+    if (route == INVALID_ROUTE)
+    {
+        return 0;
+    }
+    new total = gPatrolRoutes[route][PatrolRoutePointCount];
+    if (total <= 0)
+    {
+        ResetPatrolState(playerid, true);
+        return 1;
+    }
+    new index = PlayerPatrolPoint[playerid];
+    if (index >= total)
+    {
+        if (gPatrolRoutes[route][PatrolRouteLoop])
+        {
+            PlayerPatrolPoint[playerid] = 0;
+            index = 0;
+        }
+        else
+        {
+            ResetPatrolState(playerid, true);
+            return 1;
+        }
+    }
+    new pointIndex = gPatrolRoutes[route][PatrolRoutePointStart] + index;
+    new Float:px = gPatrolRoutePoints[pointIndex][PatrolPointX];
+    new Float:py = gPatrolRoutePoints[pointIndex][PatrolPointY];
+    new Float:pz = gPatrolRoutePoints[pointIndex][PatrolPointZ];
+    SetPlayerCheckpoint(playerid, px, py, pz, 4.0);
+    new waitTime = floatround(gPatrolRoutePoints[pointIndex][PatrolPointWait]);
+    if (waitTime <= 0)
+    {
+        waitTime = 10;
+    }
+    if (PlayerPatrolTimer[playerid] != INVALID_TIMER)
+    {
+        KillTimer(PlayerPatrolTimer[playerid]);
+    }
+    PlayerPatrolTimer[playerid] = SetTimerEx("AdvancePatrol", waitTime * 1000, false, "d", playerid);
+    PlayerPatrolPoint[playerid] = index + 1;
+#else
+    playerid = playerid;
+#endif
+    return 1;
+}
+
+public StartPatrol(playerid, routeid, factionid)
+{
+#if PATROL_ROUTE_COUNT > 0
+    if (routeid < 0 || routeid >= PATROL_ROUTE_COUNT)
+    {
+        SendClientMessage(playerid, 0xAA3333FF, "[Patrol] Nieprawidłowa trasa.");
+        return 1;
+    }
+    if (factionid != INVALID_FACTION && PlayerFaction[playerid] != factionid)
+    {
+        SendClientMessage(playerid, 0xAA3333FF, "[Patrol] Brak uprawnień do tej trasy.");
+        return 1;
+    }
+    ResetPatrolState(playerid, false);
+    PlayerActivePatrol[playerid] = routeid;
+    PlayerPatrolPoint[playerid] = 0;
+    new message[160];
+    format(message, sizeof(message), "[Patrol] Rozpoczynasz trasę %s.", gPatrolRoutes[routeid][PatrolRouteName]);
+    SendClientMessage(playerid, 0x4CAF50FF, message);
+    if (strlen(gPatrolRoutes[routeid][PatrolRouteRadio]) > 0)
+    {
+        SendClientMessage(playerid, 0x4CAF50FF, gPatrolRoutes[routeid][PatrolRouteRadio]);
+    }
+    ApplyNextPatrolPoint(playerid);
+#else
+    playerid = playerid;
+    routeid = routeid;
+    factionid = factionid;
+    SendClientMessage(playerid, 0xAA3333FF, "[Patrol] System patroli jest niedostępny.");
+#endif
+    return 1;
+}
+
+public AdvancePatrol(playerid)
+{
+#if PATROL_ROUTE_COUNT > 0
+    PlayerPatrolTimer[playerid] = INVALID_TIMER;
+    ApplyNextPatrolPoint(playerid);
+#else
+    playerid = playerid;
+#endif
+    return 1;
+}
+
+public StopPlayerPatrol(playerid)
+{
+#if PATROL_ROUTE_COUNT > 0
+    if (PlayerActivePatrol[playerid] == INVALID_ROUTE)
+    {
+        SendClientMessage(playerid, 0x4CAF50FF, "[Patrol] Nie masz aktywnej trasy.");
+        return 1;
+    }
+    ResetPatrolState(playerid, true);
+#else
+    playerid = playerid;
+#endif
+    return 1;
+}
+
+stock ResetHeistState(playerid, bool:notify)
+{
+#if HEIST_COUNT > 0
+    if (PlayerHeistTimer[playerid] != INVALID_TIMER)
+    {
+        KillTimer(PlayerHeistTimer[playerid]);
+        PlayerHeistTimer[playerid] = INVALID_TIMER;
+    }
+    if (notify && PlayerActiveHeist[playerid] != INVALID_HEIST)
+    {
+        new msg[160];
+        format(msg, sizeof(msg), "[Heist] Napad %s został przerwany.", gHeists[PlayerActiveHeist[playerid]][HeistName]);
+        SendClientMessage(playerid, 0xFF7043FF, msg);
+    }
+    PlayerActiveHeist[playerid] = INVALID_HEIST;
+    PlayerHeistStage[playerid] = 0;
+#else
+    notify = notify;
+#endif
+}
+
+stock BeginHeistStage(playerid)
+{
+#if HEIST_COUNT > 0
+    new heistid = PlayerActiveHeist[playerid];
+    if (heistid == INVALID_HEIST)
+    {
+        return 0;
+    }
+    new stageCount = gHeists[heistid][HeistStageCount];
+    if (stageCount <= 0)
+    {
+        CompleteHeist(playerid);
+        return 1;
+    }
+    new stageIndex = PlayerHeistStage[playerid];
+    if (stageIndex >= stageCount)
+    {
+        CompleteHeist(playerid);
+        return 1;
+    }
+    new stageData = gHeists[heistid][HeistStageStart] + stageIndex;
+    new message[180];
+    format(message, sizeof(message), "[Heist] Etap %d/%d: %s", stageIndex + 1, stageCount, gHeistStages[stageData][HeistStageDescription]);
+    SendClientMessage(playerid, 0xFF7043FF, message);
+    new timeLimit = gHeistStages[stageData][HeistStageTimeLimit];
+    if (timeLimit <= 0)
+    {
+        timeLimit = 30;
+    }
+    if (PlayerHeistTimer[playerid] != INVALID_TIMER)
+    {
+        KillTimer(PlayerHeistTimer[playerid]);
+    }
+    PlayerHeistTimer[playerid] = SetTimerEx("AdvanceHeistStage", timeLimit * 1000, false, "d", playerid);
+#else
+    playerid = playerid;
+#endif
+    return 1;
+}
+
+public StartHeist(playerid, heistid, factionid)
+{
+#if HEIST_COUNT > 0
+    if (heistid < 0 || heistid >= HEIST_COUNT)
+    {
+        SendClientMessage(playerid, 0xFF7043FF, "[Heist] Nieprawidłowy scenariusz.");
+        return 1;
+    }
+    if (factionid != INVALID_FACTION && PlayerFaction[playerid] != factionid)
+    {
+        SendClientMessage(playerid, 0xFF7043FF, "[Heist] Brak uprawnień do tego napadu.");
+        return 1;
+    }
+    if (PlayerActiveHeist[playerid] != INVALID_HEIST)
+    {
+        SendClientMessage(playerid, 0xFF7043FF, "[Heist] Już bierzesz udział w napadzie.");
+        return 1;
+    }
+    new now = GetTickCount();
+    if (HeistCooldowns[heistid] > now)
+    {
+        new remaining = HeistCooldowns[heistid] - now;
+        new cooldownMsg[128];
+        format(cooldownMsg, sizeof(cooldownMsg), "[Heist] Scenariusz dostępny za %d sekund.", remaining / 1000);
+        SendClientMessage(playerid, 0xFF7043FF, cooldownMsg);
+        return 1;
+    }
+    new participants = CountFactionMembers(PlayerFaction[playerid]);
+    if (participants < gHeists[heistid][HeistRequiredPlayers])
+    {
+        new needMsg[128];
+        format(needMsg, sizeof(needMsg), "[Heist] Wymagana liczba funkcjonariuszy: %d", gHeists[heistid][HeistRequiredPlayers]);
+        SendClientMessage(playerid, 0xFF7043FF, needMsg);
+        return 1;
+    }
+    ResetHeistState(playerid, false);
+    PlayerActiveHeist[playerid] = heistid;
+    PlayerHeistStage[playerid] = 0;
+    new announce[180];
+    if (strlen(gHeists[heistid][HeistAnnouncement]) > 0)
+    {
+        format(announce, sizeof(announce), "[Heist] %s", gHeists[heistid][HeistAnnouncement]);
+        SendClientMessageToAll(0xFF7043FF, announce);
+    }
+    format(announce, sizeof(announce), "[Heist] Cel: %s", gHeists[heistid][HeistLocation]);
+    SendClientMessage(playerid, 0xFF7043FF, announce);
+    if (strlen(gHeists[heistid][HeistRequiredItems]) > 0)
+    {
+        format(announce, sizeof(announce), "[Heist] Wymagane przedmioty: %s", gHeists[heistid][HeistRequiredItems]);
+        SendClientMessage(playerid, 0xFF7043FF, announce);
+    }
+#if LAW_VIOLATION_COUNT > 0
+    FlagPlayerWithViolation(playerid, 0);
+#endif
+    BeginHeistStage(playerid);
+#else
+    playerid = playerid;
+    heistid = heistid;
+    factionid = factionid;
+    SendClientMessage(playerid, 0xFF7043FF, "[Heist] System napadów jest wyłączony.");
+#endif
+    return 1;
+}
+
+public AdvanceHeistStage(playerid)
+{
+#if HEIST_COUNT > 0
+    if (!IsPlayerConnected(playerid))
+    {
+        return 0;
+    }
+    PlayerHeistTimer[playerid] = INVALID_TIMER;
+    new heistid = PlayerActiveHeist[playerid];
+    if (heistid == INVALID_HEIST)
+    {
+        return 1;
+    }
+    new stageIndex = PlayerHeistStage[playerid];
+    new stageStart = gHeists[heistid][HeistStageStart];
+    new stageCount = gHeists[heistid][HeistStageCount];
+    if (stageIndex < stageCount)
+    {
+        new stageData = stageStart + stageIndex;
+        if (strlen(gHeistStages[stageData][HeistStageSuccessMessage]) > 0)
+        {
+            SendClientMessage(playerid, 0xFF7043FF, gHeistStages[stageData][HeistStageSuccessMessage]);
+        }
+    }
+    PlayerHeistStage[playerid] = stageIndex + 1;
+    BeginHeistStage(playerid);
+#else
+    playerid = playerid;
+#endif
+    return 1;
+}
+
+public CompleteHeist(playerid)
+{
+#if HEIST_COUNT > 0
+    if (PlayerActiveHeist[playerid] == INVALID_HEIST)
+    {
+        return 1;
+    }
+    new heistid = PlayerActiveHeist[playerid];
+    new reward = gHeists[heistid][HeistRewardMoney];
+    if (reward > 0)
+    {
+        GivePlayerMoney(playerid, reward);
+        new rewardMsg[140];
+        format(rewardMsg, sizeof(rewardMsg), "[Heist] Otrzymujesz %d$ za sukces.", reward);
+        SendClientMessage(playerid, 0x33AA33FF, rewardMsg);
+    }
+    if (strlen(gHeists[heistid][HeistRewardItem]) > 0)
+    {
+        new itemMsg[160];
+        format(itemMsg, sizeof(itemMsg), "[Heist] Przyznano nagrodę: %s.", gHeists[heistid][HeistRewardItem]);
+        SendClientMessage(playerid, 0x33AA33FF, itemMsg);
+    }
+    if (gHeists[heistid][HeistRewardReputation] > 0)
+    {
+        PlayerCrimePoints[playerid] -= gHeists[heistid][HeistRewardReputation];
+        if (PlayerCrimePoints[playerid] < 0)
+        {
+            PlayerCrimePoints[playerid] = 0;
+        }
+        if (PlayerWantedLevel[playerid] > 0)
+        {
+            PlayerWantedLevel[playerid] -= 1;
+            if (PlayerWantedLevel[playerid] < 0)
+            {
+                PlayerWantedLevel[playerid] = 0;
+            }
+        }
+    }
+    new announce[180];
+    new playerName[MAX_PLAYER_NAME];
+    GetPlayerName(playerid, playerName, sizeof(playerName));
+    format(announce, sizeof(announce), "[Heist] %s ukończył scenariusz %s!", playerName, gHeists[heistid][HeistName]);
+    SendClientMessageToAll(0x33AA33FF, announce);
+    HeistCooldowns[heistid] = GetTickCount() + gHeists[heistid][HeistCooldownMinutes] * 60000;
+    ResetHeistState(playerid, false);
+#else
+    playerid = playerid;
+#endif
+    return 1;
+}
+
+stock CountFactionMembers(factionid)
+{
+    new count = 0;
+    for (new i = 0; i < MAX_PLAYERS; i++)
+    {
+        if (!IsPlayerConnected(i))
+        {
+            continue;
+        }
+        if (factionid == INVALID_FACTION || PlayerFaction[i] == factionid)
+        {
+            count++;
+        }
+    }
+    return count;
+}
+
+public ShowPlayerLawBook(playerid)
+{
+#if LAW_VIOLATION_COUNT > 0
+    SendClientMessage(playerid, 0xFFC107FF, "[Prawo] Katalog wykroczeń:");
+    for (new i = 0; i < LAW_VIOLATION_COUNT; i++)
+    {
+        new line[200];
+        format(line, sizeof(line), "%s (%s) | Grzywna: %d$ | Więzienie: %d min | Punkty: %d", gLawViolations[i][LawName], gLawViolations[i][LawCode], gLawViolations[i][LawFine], gLawViolations[i][LawJailMinutes], gLawViolations[i][LawReputationPenalty]);
+        SendClientMessage(playerid, 0xFFFFFFFF, line);
+    }
+#else
+    SendClientMessage(playerid, 0xFFC107FF, "[Prawo] Brak zdefiniowanych wykroczeń.");
+#endif
+    return 1;
+}
+
+public ShowPlayerWantedLevel(playerid)
+{
+    new line[160];
+    format(line, sizeof(line), "[Prawo] Poziom poszukiwania: %d | Punkty przestępstw: %d", PlayerWantedLevel[playerid], PlayerCrimePoints[playerid]);
+    SendClientMessage(playerid, 0xAA3333FF, line);
+#if LAW_VIOLATION_COUNT > 0
+    if (PlayerLastViolation[playerid] >= 0 && PlayerLastViolation[playerid] < LAW_VIOLATION_COUNT)
+    {
+        format(line, sizeof(line), "[Prawo] Ostatnie przewinienie: %s (%s)", gLawViolations[PlayerLastViolation[playerid]][LawName], gLawViolations[PlayerLastViolation[playerid]][LawCode]);
+        SendClientMessage(playerid, 0xAA3333FF, line);
+    }
+#endif
+    return 1;
+}
+
+stock FlagPlayerWithViolation(playerid, violationid)
+{
+#if LAW_VIOLATION_COUNT > 0
+    if (violationid < 0 || violationid >= LAW_VIOLATION_COUNT)
+    {
+        return 0;
+    }
+    PlayerWantedLevel[playerid] += gLawViolations[violationid][LawSeverity];
+    PlayerCrimePoints[playerid] += gLawViolations[violationid][LawReputationPenalty];
+    PlayerLastViolation[playerid] = violationid;
+    new message[180];
+    format(message, sizeof(message), "[Prawo] Popełniasz przestępstwo: %s (kod %s).", gLawViolations[violationid][LawName], gLawViolations[violationid][LawCode]);
+    SendClientMessage(playerid, 0xAA3333FF, message);
+    if (gLawViolations[violationid][LawFine] > 0 || gLawViolations[violationid][LawJailMinutes] > 0)
+    {
+        format(message, sizeof(message), "[Prawo] Sankcje: %d$ grzywny, %d min więzienia.", gLawViolations[violationid][LawFine], gLawViolations[violationid][LawJailMinutes]);
+        SendClientMessage(playerid, 0xAA3333FF, message);
+    }
+#else
+    playerid = playerid;
+    violationid = violationid;
+#endif
+    return 1;
+}
+
 SetupWeatherCycle()
 {
 $weather_setup
@@ -330,6 +835,11 @@ public OnPlayerConnect(playerid)
     PlayerJob[playerid] = JOB_NONE;
     PlayerQuest[playerid] = QUEST_NONE;
     PlayerQuestStep[playerid] = 0;
+    PlayerWantedLevel[playerid] = 0;
+    PlayerCrimePoints[playerid] = 0;
+#if LAW_VIOLATION_COUNT > 0
+    PlayerLastViolation[playerid] = -1;
+#endif
     for (new i = 0; i < ACHIEVEMENT_COUNT; i++)
     {
         PlayerAchievements[playerid][i] = false;
@@ -346,6 +856,16 @@ public OnPlayerConnect(playerid)
     {
         PlayerSkillTrainingCooldown[playerid][training] = 0;
     }
+#endif
+#if PATROL_ROUTE_COUNT > 0
+    PlayerActivePatrol[playerid] = INVALID_ROUTE;
+    PlayerPatrolPoint[playerid] = 0;
+    PlayerPatrolTimer[playerid] = INVALID_TIMER;
+#endif
+#if HEIST_COUNT > 0
+    PlayerActiveHeist[playerid] = INVALID_HEIST;
+    PlayerHeistStage[playerid] = 0;
+    PlayerHeistTimer[playerid] = INVALID_TIMER;
 #endif
     SendClientMessage(playerid, 0xFFFFFFFF, "$welcome_message");
     return 1;
@@ -357,6 +877,11 @@ public OnPlayerDisconnect(playerid, reason)
     PlayerJob[playerid] = JOB_NONE;
     PlayerQuest[playerid] = QUEST_NONE;
     PlayerQuestStep[playerid] = 0;
+    PlayerWantedLevel[playerid] = 0;
+    PlayerCrimePoints[playerid] = 0;
+#if LAW_VIOLATION_COUNT > 0
+    PlayerLastViolation[playerid] = -1;
+#endif
     for (new i = 0; i < ACHIEVEMENT_COUNT; i++)
     {
         PlayerAchievements[playerid][i] = false;
@@ -373,6 +898,12 @@ public OnPlayerDisconnect(playerid, reason)
     {
         PlayerSkillTrainingCooldown[playerid][training] = 0;
     }
+#endif
+#if PATROL_ROUTE_COUNT > 0
+    ResetPatrolState(playerid, false);
+#endif
+#if HEIST_COUNT > 0
+    ResetHeistState(playerid, false);
 #endif
     return 1;
 }

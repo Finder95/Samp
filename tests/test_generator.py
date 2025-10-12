@@ -45,6 +45,10 @@ def test_generator_creates_file(tmp_path: Path, monkeypatch):
     assert "/skill_strzelectwo" in content
     assert "/trening_strzelnica" in content
     assert "StartTerritoryCapture" in content
+    assert "ShowPlayerLawBook" in content
+    assert "/heist_bank" in content
+    assert "/patrol_downtown" in content
+    assert "/zakoncz_patrol" in content
 
 
 def test_cli_prepares_server_package(tmp_path: Path, monkeypatch):
@@ -80,6 +84,9 @@ def test_cli_prepares_server_package(tmp_path: Path, monkeypatch):
     assert "Strzelectwo" in metadata["skills"]
     assert "Strzelnica Policyjna" in metadata["skill_trainings"]
     assert "Plac Rządowy" in metadata["territories"]
+    assert "SPEEDING" in metadata["law_violations"]
+    assert "Downtown Patrol" in metadata["patrol_routes"]
+    assert "Symulacja Napadu Downtown" in metadata["heists"]
     assert metadata["weather_cycle"] == [2, 1, 8]
 
     pawn_content = gamemode_path.read_text(encoding="utf-8")
@@ -98,6 +105,9 @@ def test_cli_prepares_server_package(tmp_path: Path, monkeypatch):
     assert "/trening_medyczny" in pawn_content
     assert "TickTerritories" in pawn_content
     assert 'SetTimerEx("AdvanceTerritoryCapture"' in pawn_content
+    assert "LAW_VIOLATION_COUNT" in pawn_content
+    assert "StartHeist" in pawn_content
+    assert "StartPatrol" in pawn_content
 
 
 def test_cli_exports_bot_scripts(tmp_path: Path, monkeypatch):

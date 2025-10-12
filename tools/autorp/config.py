@@ -1265,6 +1265,252 @@ class Territory:
 
 
 @dataclass(slots=True)
+class LawViolation:
+    """Represents a law violation that can be assigned to a player."""
+
+    code: str
+    name: str
+    description: str
+    severity: int = 1
+    fine: int = 0
+    jail_minutes: int = 0
+    reputation_penalty: int = 0
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "LawViolation":
+        return cls(
+            code=data.get("code", "UNK"),
+            name=data.get("name", data.get("title", "Wykroczenie")),
+            description=data.get("description", ""),
+            severity=data.get("severity", data.get("level", 1)),
+            fine=data.get("fine", data.get("penalty", 0)),
+            jail_minutes=data.get("jail_minutes", data.get("jail", 0)),
+            reputation_penalty=data.get("reputation_penalty", data.get("reputation", 0)),
+        )
+
+    @property
+    def constant(self) -> str:
+        return f"LAW_{sanitize_identifier(self.code)}"
+
+    def array_entry(self) -> str:
+        name = escape_pawn_string(self.name)
+        description = escape_pawn_string(self.description)
+        code = escape_pawn_string(self.code)
+        return (
+            "    {"
+            f'"{code}", "{name}", "{description}", {self.severity}, {self.fine}, {self.jail_minutes}, {self.reputation_penalty}'
+            "}"
+        )
+
+
+@dataclass(slots=True)
+class PatrolPoint:
+    """Single point of a patrol route."""
+
+    x: float
+    y: float
+    z: float
+    wait_seconds: int = 5
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "PatrolPoint":
+        return cls(
+            x=data.get("x", 0.0),
+            y=data.get("y", 0.0),
+            z=data.get("z", 5.0),
+            wait_seconds=data.get("wait_seconds", data.get("wait", 5)),
+        )
+
+    def array_entry(self) -> str:
+        return f"    {{{self.x}, {self.y}, {self.z}, {self.wait_seconds}}}"
+
+
+@dataclass(slots=True)
+class PatrolRoute:
+    """Predefined patrol run for law enforcement factions."""
+
+    name: str
+    faction: str
+    points: Sequence[PatrolPoint] = field(default_factory=list)
+    loop: bool = True
+    command: str | None = None
+    radio_message: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.command:
+            if not self.command.startswith("/"):
+                self.command = "/" + self.command
+        else:
+            self.command = "/patrol_" + sanitize_identifier(self.name).lower()
+        if self.radio_message is None:
+            self.radio_message = f"Rozpoczynasz patrol: {self.name}"
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "PatrolRoute":
+        points = [PatrolPoint.from_dict(point) for point in data.get("points", [])]
+        return cls(
+            name=data.get("name", "Patrol"),
+            faction=data.get("faction", data.get("required_faction", "")),
+            points=points,
+            loop=data.get("loop", True),
+            command=data.get("command"),
+            radio_message=data.get("radio_message"),
+        )
+
+    @property
+    def constant(self) -> str:
+        return f"PATROL_{sanitize_identifier(self.name)}"
+
+    def command_trigger(self) -> str:
+        assert self.command is not None
+        return self.command
+
+    def array_entry(self, factions: dict[str, "Faction"], point_start: int) -> str:
+        faction = factions.get(self.faction)
+        faction_constant = faction.constant if faction else "INVALID_FACTION"
+        name = escape_pawn_string(self.name)
+        command = escape_pawn_string(self.command_trigger())
+        radio = escape_pawn_string(self.radio_message or "")
+        return (
+            "    {"
+            f'"{name}", {faction_constant}, {point_start}, {len(self.points)}, {1 if self.loop else 0}, "{command}", "{radio}"'
+            "}"
+        )
+
+    def command_block(self, index: int, prefix: str, factions: dict[str, "Faction"]) -> list[str]:
+        trigger = escape_pawn_string(self.command_trigger())
+        faction = factions.get(self.faction)
+        faction_constant = faction.constant if faction else "INVALID_FACTION"
+        block = [f"{prefix}(!strcmp(cmdtext, \"{trigger}\", true))", "{"]
+        block.extend(
+            [
+                f"    return StartPatrol(playerid, {index}, {faction_constant});",
+                "}",
+            ]
+        )
+        return block
+
+
+@dataclass(slots=True)
+class HeistStage:
+    """Single stage of a cooperative heist."""
+
+    description: str
+    success_message: str | None = None
+    failure_message: str | None = None
+    time_limit: int = 60
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "HeistStage":
+        return cls(
+            description=data.get("description", ""),
+            success_message=data.get("success_message"),
+            failure_message=data.get("failure_message"),
+            time_limit=data.get("time_limit", data.get("duration", 60)),
+        )
+
+    def array_entry(self) -> str:
+        description = escape_pawn_string(self.description)
+        success = escape_pawn_string(self.success_message or "")
+        failure = escape_pawn_string(self.failure_message or "")
+        return (
+            "    {"
+            f'"{description}", {self.time_limit}, "{success}", "{failure}"'
+            "}"
+        )
+
+
+@dataclass(slots=True)
+class Heist:
+    """Complex crime scenario with multi-stage progression."""
+
+    name: str
+    location: str
+    cooldown_minutes: int
+    required_players: int = 1
+    required_faction: str | None = None
+    required_items: Sequence[str] = field(default_factory=list)
+    reward_money: int = 0
+    reward_item: str | None = None
+    reward_reputation: int = 0
+    start_command: str | None = None
+    announcement: str | None = None
+    stages: Sequence[HeistStage] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if self.start_command:
+            if not self.start_command.startswith("/"):
+                self.start_command = "/" + self.start_command
+        else:
+            self.start_command = "/heist_" + sanitize_identifier(self.name).lower()
+        if self.announcement is None:
+            self.announcement = f"Rozpoczyna się napad: {self.name}"
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Heist":
+        stages = [HeistStage.from_dict(stage) for stage in data.get("stages", [])]
+        return cls(
+            name=data.get("name", "Heist"),
+            location=data.get("location", ""),
+            cooldown_minutes=data.get("cooldown_minutes", data.get("cooldown", 30)),
+            required_players=data.get("required_players", data.get("players", 1)),
+            required_faction=data.get("required_faction"),
+            required_items=data.get("required_items", data.get("items", [])),
+            reward_money=data.get("reward_money", data.get("reward", 0)),
+            reward_item=data.get("reward_item"),
+            reward_reputation=data.get("reward_reputation", data.get("reputation", 0)),
+            start_command=data.get("start_command"),
+            announcement=data.get("announcement"),
+            stages=stages,
+        )
+
+    @property
+    def constant(self) -> str:
+        return f"HEIST_{sanitize_identifier(self.name)}"
+
+    def command_trigger(self) -> str:
+        assert self.start_command is not None
+        return self.start_command
+
+    def array_entry(self, factions: dict[str, "Faction"], stage_start: int) -> str:
+        faction_constant = "INVALID_FACTION"
+        if self.required_faction:
+            faction = factions.get(self.required_faction)
+            if faction:
+                faction_constant = faction.constant
+        name = escape_pawn_string(self.name)
+        location = escape_pawn_string(self.location)
+        items = escape_pawn_string(
+            ",".join(self.required_items) if self.required_items else ""
+        )
+        announcement = escape_pawn_string(self.announcement or "")
+        reward_item = escape_pawn_string(self.reward_item or "")
+        return (
+            "    {"
+            f'"{name}", "{location}", {self.cooldown_minutes}, {self.required_players}, '
+            f"{stage_start}, {len(self.stages)}, {self.reward_money}, "
+            f'"{reward_item}", {self.reward_reputation}, "{items}", {faction_constant}, "{announcement}"'
+            "}"
+        )
+
+    def command_block(self, index: int, prefix: str, factions: dict[str, "Faction"]) -> list[str]:
+        trigger = escape_pawn_string(self.command_trigger())
+        faction_constant = "INVALID_FACTION"
+        if self.required_faction:
+            faction = factions.get(self.required_faction)
+            if faction:
+                faction_constant = faction.constant
+        block = [f"{prefix}(!strcmp(cmdtext, \"{trigger}\", true))", "{"]
+        block.extend(
+            [
+                f"    return StartHeist(playerid, {index}, {faction_constant});",
+                "}",
+            ]
+        )
+        return block
+
+
+@dataclass(slots=True)
 class WeatherStage:
     """Single stage of a dynamic weather cycle."""
 
@@ -1433,6 +1679,10 @@ class GamemodeConfig:
     skills: Sequence[Skill] = field(default_factory=list)
     skill_trainings: Sequence[SkillTraining] = field(default_factory=list)
     territories: Sequence[Territory] = field(default_factory=list)
+    law_violations: Sequence[LawViolation] = field(default_factory=list)
+    patrol_routes: Sequence[PatrolRoute] = field(default_factory=list)
+    heists: Sequence[Heist] = field(default_factory=list)
+    patrol_stop_command: str = "/stop_patrol"
     weather_cycle: WeatherCycle | None = None
     server_settings: ServerSettings = field(default_factory=ServerSettings)
     world_settings: WorldSettings = field(default_factory=WorldSettings)
@@ -1477,6 +1727,19 @@ class GamemodeConfig:
             for training in trainings_data
         ]
         territories = [Territory.from_dict(t) for t in data.get("territories", [])]
+        law_data = data.get("law", {})
+        law_violations = [
+            LawViolation.from_dict(violation)
+            for violation in law_data.get("violations", [])
+        ]
+        patrol_routes = [
+            PatrolRoute.from_dict(route)
+            for route in law_data.get("patrol_routes", [])
+        ]
+        heists = [Heist.from_dict(heist) for heist in data.get("heists", [])]
+        patrol_stop_command = law_data.get("stop_patrol_command", "/stop_patrol")
+        if patrol_stop_command and not patrol_stop_command.startswith("/"):
+            patrol_stop_command = "/" + patrol_stop_command
         weather_cycle_data = data.get("weather_cycle")
         weather_cycle = (
             WeatherCycle.from_dict(weather_cycle_data)
@@ -1512,6 +1775,10 @@ class GamemodeConfig:
             skills=skills,
             skill_trainings=skill_trainings,
             territories=territories,
+            law_violations=law_violations,
+            patrol_routes=patrol_routes,
+            heists=heists,
+            patrol_stop_command=patrol_stop_command,
             weather_cycle=weather_cycle,
             scenarios=scenarios,
             server_settings=server_settings,
@@ -1634,6 +1901,15 @@ class GamemodeConfig:
 
         territory_lines = self._territory_command_lines("if" if not lines else "else if")
         lines.extend(territory_lines)
+
+        heist_lines = self._heist_command_lines("if" if not lines else "else if")
+        lines.extend(heist_lines)
+
+        patrol_lines = self._patrol_command_lines("if" if not lines else "else if")
+        lines.extend(patrol_lines)
+
+        law_lines = self._law_command_lines("if" if not lines else "else if")
+        lines.extend(law_lines)
         if not lines:
             return ["// Brak zdefiniowanych komend", "return 0;"]
         lines.append("return 0;")
@@ -2308,6 +2584,243 @@ class GamemodeConfig:
             prefix = "else if"
         return lines
 
+    def _law_violation_definitions(self) -> str:
+        lines = [
+            "enum eLawViolationData {",
+            "    LawCode[16],",
+            "    LawName[48],",
+            "    LawDescription[160],",
+            "    LawSeverity,",
+            "    LawFine,",
+            "    LawJailMinutes,",
+            "    LawReputationPenalty",
+            "};",
+        ]
+        entries = [violation.array_entry() for violation in self.law_violations]
+        if not entries:
+            array_lines = ["new gLawViolations[][eLawViolationData] = {};"]
+        else:
+            body = ",\n".join(entries)
+            array_lines = [
+                "new gLawViolations[][eLawViolationData] = {",
+                body,
+                "};",
+            ]
+        return "\n".join(lines + array_lines)
+
+    def _law_setup_lines(self) -> list[str]:
+        lines: list[str] = []
+        if self.law_violations:
+            lines.append(
+                'printf("[AutoRP] Zarejestrowano %d wykroczeń/kategorii przestępstw.", sizeof(gLawViolations));'
+            )
+        if self.patrol_routes:
+            lines.append(
+                'printf("[AutoRP] Dostępnych tras patrolowych: %d.", sizeof(gPatrolRoutes));'
+            )
+        if self.heists:
+            lines.append(
+                'printf("[AutoRP] Dostępnych napadów fabularnych: %d.", sizeof(gHeists));'
+            )
+        if not lines:
+            return ['printf("[AutoRP] Brak rozszerzeń systemu prawa.");']
+        return lines
+
+    def _law_command_lines(self, initial_prefix: str) -> list[str]:
+        prefix = initial_prefix
+        lines: list[str] = []
+        lawbook_trigger = escape_pawn_string("/kodeks")
+        lines.extend(
+            [
+                f"{prefix}(!strcmp(cmdtext, \"{lawbook_trigger}\", true))",
+                "{",
+                "    ShowPlayerLawBook(playerid);",
+                "    return 1;",
+                "}",
+            ]
+        )
+        prefix = "else if"
+        wanted_trigger = escape_pawn_string("/wanted")
+        lines.extend(
+            [
+                f"{prefix}(!strcmp(cmdtext, \"{wanted_trigger}\", true))",
+                "{",
+                "    ShowPlayerWantedLevel(playerid);",
+                "    return 1;",
+                "}",
+            ]
+        )
+        if self.patrol_routes:
+            stop_trigger = escape_pawn_string(self.patrol_stop_command)
+            condition_prefix = "else if" if lines else prefix
+            lines.extend(
+                [
+                    f"{condition_prefix}(!strcmp(cmdtext, \"{stop_trigger}\", true))",
+                    "{",
+                    "    StopPlayerPatrol(playerid);",
+                    "    return 1;",
+                    "}",
+                ]
+            )
+        return lines
+
+    def _patrol_point_array(self) -> str:
+        if not self.patrol_routes:
+            return "\n".join(
+                [
+                    "enum ePatrolPointData {",
+                    "    PatrolPointX,",
+                    "    PatrolPointY,",
+                    "    PatrolPointZ,",
+                    "    PatrolPointWait",
+                    "};",
+                    "new Float:gPatrolRoutePoints[][ePatrolPointData] = {};",
+                ]
+            )
+        entries: list[str] = []
+        for route in self.patrol_routes:
+            entries.extend(point.array_entry() for point in route.points)
+        body = ",\n".join(entries)
+        return "\n".join(
+            [
+                "enum ePatrolPointData {",
+                "    PatrolPointX,",
+                "    PatrolPointY,",
+                "    PatrolPointZ,",
+                "    PatrolPointWait",
+                "};",
+                "new Float:gPatrolRoutePoints[][ePatrolPointData] = {",
+                body,
+                "};",
+            ]
+        )
+
+    def _patrol_route_definitions(self) -> str:
+        lines = [
+            "enum ePatrolRouteData {",
+            "    PatrolRouteName[48],",
+            "    PatrolRouteFaction,",
+            "    PatrolRoutePointStart,",
+            "    PatrolRoutePointCount,",
+            "    PatrolRouteLoop,",
+            "    PatrolRouteCommand[32],",
+            "    PatrolRouteRadio[96]",
+            "};",
+        ]
+        if not self.patrol_routes:
+            array_lines = ["new gPatrolRoutes[][ePatrolRouteData] = {};"]
+        else:
+            factions = self.faction_lookup()
+            entries: list[str] = []
+            point_start = 0
+            for route in self.patrol_routes:
+                entries.append(route.array_entry(factions, point_start))
+                point_start += len(route.points)
+            body = ",\n".join(entries)
+            array_lines = [
+                "new gPatrolRoutes[][ePatrolRouteData] = {",
+                body,
+                "};",
+            ]
+        return "\n".join(lines + array_lines)
+
+    def _patrol_route_setup_lines(self) -> list[str]:
+        if not self.patrol_routes:
+            return ['printf("[AutoRP] Brak tras patrolowych.");']
+        return [
+            'printf("[AutoRP] Zarejestrowano trasy patrolowe: %d.", sizeof(gPatrolRoutes));',
+        ]
+
+    def _patrol_command_lines(self, initial_prefix: str) -> list[str]:
+        if not self.patrol_routes:
+            return []
+        prefix = initial_prefix
+        lines: list[str] = []
+        factions = self.faction_lookup()
+        for index, route in enumerate(self.patrol_routes):
+            block = route.command_block(index, prefix, factions)
+            lines.extend(block)
+            prefix = "else if"
+        return lines
+
+    def _heist_stage_definitions(self) -> str:
+        lines = [
+            "enum eHeistStageData {",
+            "    HeistStageDescription[160],",
+            "    HeistStageTimeLimit,",
+            "    HeistStageSuccessMessage[96],",
+            "    HeistStageFailureMessage[96]",
+            "};",
+        ]
+        entries = [
+            stage.array_entry()
+            for heist in self.heists
+            for stage in heist.stages
+        ]
+        if not entries:
+            array_lines = ["new gHeistStages[][eHeistStageData] = {};"]
+        else:
+            body = ",\n".join(entries)
+            array_lines = [
+                "new gHeistStages[][eHeistStageData] = {",
+                body,
+                "};",
+            ]
+        return "\n".join(lines + array_lines)
+
+    def _heist_definitions(self) -> str:
+        lines = [
+            "enum eHeistData {",
+            "    HeistName[48],",
+            "    HeistLocation[96],",
+            "    HeistCooldownMinutes,",
+            "    HeistRequiredPlayers,",
+            "    HeistStageStart,",
+            "    HeistStageCount,",
+            "    HeistRewardMoney,",
+            "    HeistRewardItem[32],",
+            "    HeistRewardReputation,",
+            "    HeistRequiredItems[96],",
+            "    HeistFaction,",
+            "    HeistAnnouncement[128]",
+            "};",
+        ]
+        if not self.heists:
+            array_lines = ["new gHeists[][eHeistData] = {};"]
+        else:
+            factions = self.faction_lookup()
+            entries: list[str] = []
+            stage_start = 0
+            for heist in self.heists:
+                entries.append(heist.array_entry(factions, stage_start))
+                stage_start += len(heist.stages)
+            body = ",\n".join(entries)
+            array_lines = [
+                "new gHeists[][eHeistData] = {",
+                body,
+                "};",
+            ]
+        return "\n".join(lines + array_lines)
+
+    def _heist_setup_lines(self) -> list[str]:
+        if not self.heists:
+            return ['printf("[AutoRP] Brak aktywnych scenariuszy napadów.");']
+        return [
+            'printf("[AutoRP] Zarejestrowano napady fabularne: %d.", sizeof(gHeists));',
+        ]
+
+    def _heist_command_lines(self, initial_prefix: str) -> list[str]:
+        if not self.heists:
+            return []
+        prefix = initial_prefix
+        lines: list[str] = []
+        factions = self.faction_lookup()
+        for index, heist in enumerate(self.heists):
+            block = heist.command_block(index, prefix, factions)
+            lines.extend(block)
+            prefix = "else if"
+        return lines
+
     def _weather_stage_definitions(self) -> str:
         lines = [
             "enum eWeatherStageData {",
@@ -2386,6 +2899,9 @@ class GamemodeConfig:
             "skills": [skill.name for skill in self.skills],
             "skill_trainings": [training.name for training in self.skill_trainings],
             "territories": [territory.name for territory in self.territories],
+            "law_violations": [violation.code for violation in self.law_violations],
+            "patrol_routes": [route.name for route in self.patrol_routes],
+            "heists": [heist.name for heist in self.heists],
             "weather_cycle": [stage.weather for stage in self.weather_cycle.stages]
             if self.weather_cycle
             else [],
@@ -2480,6 +2996,18 @@ class GamemodeConfig:
             "territory_setup": indent_lines(
                 self._territory_setup_lines(), level=1
             ),
+            "law_violation_count": len(self.law_violations),
+            "law_violation_definitions": self._law_violation_definitions(),
+            "law_setup": indent_lines(self._law_setup_lines(), level=1),
+            "patrol_route_count": len(self.patrol_routes),
+            "patrol_point_definitions": self._patrol_point_array(),
+            "patrol_route_definitions": self._patrol_route_definitions(),
+            "patrol_setup": indent_lines(self._patrol_route_setup_lines(), level=1),
+            "patrol_stop_command": escape_pawn_string(self.patrol_stop_command),
+            "heist_count": len(self.heists),
+            "heist_definitions": self._heist_definitions(),
+            "heist_stage_definitions": self._heist_stage_definitions(),
+            "heist_setup": indent_lines(self._heist_setup_lines(), level=1),
             "weather_stage_definitions": self._weather_stage_definitions(),
             "weather_setup": indent_lines(self._weather_setup_lines(), level=1),
             "event_forwards": self._event_forwards(),
@@ -2516,6 +3044,11 @@ __all__ = [
     "SkillLevel",
     "SkillTraining",
     "Territory",
+    "LawViolation",
+    "PatrolRoute",
+    "PatrolPoint",
+    "Heist",
+    "HeistStage",
     "WeatherStage",
     "WeatherCycle",
     "BotScenarioDefinition",
