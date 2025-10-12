@@ -1011,6 +1011,260 @@ class Achievement:
 
 
 @dataclass(slots=True)
+class SkillLevel:
+    """Configuration for a single skill level."""
+
+    xp: int
+    reward_message: str | None = None
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "SkillLevel":
+        return cls(
+            xp=data.get("xp", data.get("experience", 0)),
+            reward_message=data.get("reward_message") or data.get("message"),
+        )
+
+
+@dataclass(slots=True)
+class Skill:
+    """Skill with progressive XP tiers."""
+
+    name: str
+    description: str
+    progress_command: str | None = None
+    levels: Sequence[SkillLevel] = field(default_factory=list)
+
+    def __post_init__(self) -> None:
+        if self.progress_command:
+            if not self.progress_command.startswith("/"):
+                self.progress_command = "/" + self.progress_command
+        else:
+            self.progress_command = "/skill_" + sanitize_identifier(self.name).lower()
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Skill":
+        levels = [SkillLevel.from_dict(level) for level in data.get("levels", [])]
+        if not levels:
+            levels = [SkillLevel(xp=100)]
+        return cls(
+            name=data.get("name", "Umiejętność"),
+            description=data.get("description", ""),
+            progress_command=data.get("command"),
+            levels=tuple(levels),
+        )
+
+    @property
+    def constant(self) -> str:
+        return f"SKILL_{sanitize_identifier(self.name)}"
+
+    def command_trigger(self) -> str:
+        assert self.progress_command is not None
+        return self.progress_command
+
+    def level_count(self) -> int:
+        return len(self.levels)
+
+    def array_entry(self) -> str:
+        name = escape_pawn_string(self.name)
+        description = escape_pawn_string(self.description)
+        command = escape_pawn_string(self.command_trigger())
+        return f'    {{"{name}", "{description}", "{command}", {self.level_count()}}}'
+
+    def xp_row(self, max_levels: int) -> str:
+        values = [str(level.xp) for level in self.levels]
+        values.extend("0" for _ in range(max_levels - len(values)))
+        return "    {" + ", ".join(values) + "}"
+
+    def reward_row(self, max_levels: int) -> str:
+        messages = [escape_pawn_string(level.reward_message or "") for level in self.levels]
+        messages.extend("" for _ in range(max_levels - len(messages)))
+        formatted = ",\n        ".join(f'"{msg}"' for msg in messages)
+        return "    {\n        " + formatted + "\n    }"
+
+    def command_block(self, index: int, prefix: str) -> list[str]:
+        trigger = escape_pawn_string(self.command_trigger())
+        block = [f"{prefix}(!strcmp(cmdtext, \"{trigger}\", true))", "{"]
+        block.extend(
+            [
+                "    new buffer[200];",
+                f'    format(buffer, sizeof(buffer), "Umiejętność: %s (poziom %d)", gSkills[{index}][SkillName], PlayerSkillLevel[playerid][{index}]);',
+                "    SendClientMessage(playerid, 0x55AAFFFF, buffer);",
+                f'    format(buffer, sizeof(buffer), "Postęp: %d/%d XP", PlayerSkillXp[playerid][{index}], gSkillLevelXp[{index}][PlayerSkillLevel[playerid][{index}]]);',
+                "    SendClientMessage(playerid, 0xFFFFFFFF, buffer);",
+                "    SendClientMessage(playerid, 0xCCCCFFFF, gSkills[{index}][SkillDescription]);",
+                "    return 1;",
+                "}",
+            ]
+        )
+        return block
+
+
+@dataclass(slots=True)
+class SkillTraining:
+    """Definition of a training command that awards skill XP."""
+
+    name: str
+    skill: str
+    command: str
+    xp_gain: int
+    description: str = ""
+    cooldown: int = 60
+    success_message: str | None = None
+
+    def __post_init__(self) -> None:
+        if not self.command.startswith("/"):
+            self.command = "/" + self.command
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "SkillTraining":
+        return cls(
+            name=data.get("name", "Trening"),
+            skill=data.get("skill", ""),
+            command=data.get("command", "/trening"),
+            xp_gain=data.get("xp_gain", data.get("xp", 25)),
+            description=data.get("description", ""),
+            cooldown=data.get("cooldown", 60),
+            success_message=data.get("success_message"),
+        )
+
+    @property
+    def constant(self) -> str:
+        return f"SKILL_TRAINING_{sanitize_identifier(self.name)}"
+
+    def array_entry(self, skills: dict[str, "Skill"]) -> str:
+        skill = skills.get(self.skill)
+        skill_constant = skill.constant if skill else "SKILL_NONE"
+        name = escape_pawn_string(self.name)
+        description = escape_pawn_string(self.description)
+        command = escape_pawn_string(self.command)
+        success = escape_pawn_string(self.success_message or "")
+        return (
+            "    {"
+            f'"{name}", "{description}", "{command}", {skill_constant}, {self.xp_gain}, {self.cooldown}, "{success}"'
+            "}"
+        )
+
+    def command_block(self, index: int, prefix: str) -> list[str]:
+        trigger = escape_pawn_string(self.command)
+        block = [f"{prefix}(!strcmp(cmdtext, \"{trigger}\", true))", "{"]
+        block.extend(
+            [
+                f"    return HandleSkillTraining(playerid, {index});",
+                "}",
+            ]
+        )
+        return block
+
+
+@dataclass(slots=True)
+class Territory:
+    """Captureable territory with periodic income."""
+
+    name: str
+    description: str
+    x: float
+    y: float
+    z: float
+    radius: float
+    owner_faction: str | None = None
+    income: int = 0
+    capture_time: int = 60
+    reward_money: int = 0
+    info_command: str | None = None
+    capture_command: str | None = None
+    broadcast_message: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.info_command:
+            if not self.info_command.startswith("/"):
+                self.info_command = "/" + self.info_command
+        else:
+            self.info_command = "/teren_" + sanitize_identifier(self.name).lower()
+        if self.capture_command:
+            if not self.capture_command.startswith("/"):
+                self.capture_command = "/" + self.capture_command
+        else:
+            self.capture_command = "/przejmij_" + sanitize_identifier(self.name).lower()
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Territory":
+        return cls(
+            name=data.get("name", "Teren"),
+            description=data.get("description", ""),
+            x=data.get("x", 0.0),
+            y=data.get("y", 0.0),
+            z=data.get("z", 0.0),
+            radius=data.get("radius", 5.0),
+            owner_faction=data.get("owner_faction"),
+            income=data.get("income", 0),
+            capture_time=data.get("capture_time", 60),
+            reward_money=data.get("reward_money", 0),
+            info_command=data.get("info_command"),
+            capture_command=data.get("capture_command"),
+            broadcast_message=data.get("broadcast_message"),
+        )
+
+    @property
+    def constant(self) -> str:
+        return f"TERRITORY_{sanitize_identifier(self.name)}"
+
+    def info_trigger(self) -> str:
+        assert self.info_command is not None
+        return self.info_command
+
+    def capture_trigger(self) -> str:
+        assert self.capture_command is not None
+        return self.capture_command
+
+    def array_entry(self, factions: dict[str, "Faction"]) -> str:
+        faction_constant = "INVALID_FACTION"
+        if self.owner_faction:
+            faction = factions.get(self.owner_faction)
+            if faction:
+                faction_constant = faction.constant
+        name = escape_pawn_string(self.name)
+        description = escape_pawn_string(self.description)
+        info_command = escape_pawn_string(self.info_trigger())
+        capture_command = escape_pawn_string(self.capture_trigger())
+        broadcast = escape_pawn_string(self.broadcast_message or "")
+        return (
+            "    {"
+            f'"{name}", "{description}", {self.x}, {self.y}, {self.z}, {self.radius}, '
+            f"{faction_constant}, {self.income}, {self.capture_time}, {self.reward_money}, "
+            f'"{info_command}", "{capture_command}", "{broadcast}"'
+            "}"
+        )
+
+    def info_command_block(self, index: int, prefix: str) -> list[str]:
+        trigger = escape_pawn_string(self.info_trigger())
+        block = [f"{prefix}(!strcmp(cmdtext, \"{trigger}\", true))", "{"]
+        block.extend(
+            [
+                "    new buffer[200];",
+                f'    format(buffer, sizeof(buffer), "Teren %s - kontrola frakcji %d", gTerritories[{index}][TerritoryName], TerritoryOwners[{index}]);',
+                "    SendClientMessage(playerid, 0x77CC77FF, buffer);",
+                "    SendClientMessage(playerid, 0xFFFFFFFF, gTerritories[{index}][TerritoryDescription]);",
+                f'    format(buffer, sizeof(buffer), "Dochód: %d$ co cykl", gTerritories[{index}][TerritoryIncome]);',
+                "    SendClientMessage(playerid, 0x77CC77FF, buffer);",
+                "    return 1;",
+                "}",
+            ]
+        )
+        return block
+
+    def capture_command_block(self, index: int, prefix: str) -> list[str]:
+        trigger = escape_pawn_string(self.capture_trigger())
+        block = [f"{prefix}(!strcmp(cmdtext, \"{trigger}\", true))", "{"]
+        block.extend(
+            [
+                f"    return StartTerritoryCapture(playerid, {index});",
+                "}",
+            ]
+        )
+        return block
+
+
+@dataclass(slots=True)
 class WeatherStage:
     """Single stage of a dynamic weather cycle."""
 
@@ -1176,6 +1430,9 @@ class GamemodeConfig:
     businesses: Sequence[Business] = field(default_factory=list)
     crafting_recipes: Sequence[CraftingRecipe] = field(default_factory=list)
     achievements: Sequence[Achievement] = field(default_factory=list)
+    skills: Sequence[Skill] = field(default_factory=list)
+    skill_trainings: Sequence[SkillTraining] = field(default_factory=list)
+    territories: Sequence[Territory] = field(default_factory=list)
     weather_cycle: WeatherCycle | None = None
     server_settings: ServerSettings = field(default_factory=ServerSettings)
     world_settings: WorldSettings = field(default_factory=WorldSettings)
@@ -1213,6 +1470,13 @@ class GamemodeConfig:
             Achievement.from_dict(achievement)
             for achievement in data.get("achievements", [])
         ]
+        skills = [Skill.from_dict(skill) for skill in data.get("skills", [])]
+        trainings_data = data.get("skill_trainings") or data.get("trainings", [])
+        skill_trainings = [
+            SkillTraining.from_dict(training)
+            for training in trainings_data
+        ]
+        territories = [Territory.from_dict(t) for t in data.get("territories", [])]
         weather_cycle_data = data.get("weather_cycle")
         weather_cycle = (
             WeatherCycle.from_dict(weather_cycle_data)
@@ -1245,6 +1509,9 @@ class GamemodeConfig:
             businesses=businesses,
             crafting_recipes=crafting_recipes,
             achievements=achievements,
+            skills=skills,
+            skill_trainings=skill_trainings,
+            territories=territories,
             weather_cycle=weather_cycle,
             scenarios=scenarios,
             server_settings=server_settings,
@@ -1261,6 +1528,9 @@ class GamemodeConfig:
 
     def job_lookup(self) -> dict[str, Job]:
         return {job.name: job for job in self.jobs}
+
+    def skill_lookup(self) -> dict[str, Skill]:
+        return {skill.name: skill for skill in self.skills}
 
     def _default_faction_constant(self) -> str:
         if not self.factions:
@@ -1355,6 +1625,15 @@ class GamemodeConfig:
 
         achievement_lines = self._achievement_command_lines("if" if not lines else "else if")
         lines.extend(achievement_lines)
+
+        skill_lines = self._skill_command_lines("if" if not lines else "else if")
+        lines.extend(skill_lines)
+
+        training_lines = self._skill_training_command_lines("if" if not lines else "else if")
+        lines.extend(training_lines)
+
+        territory_lines = self._territory_command_lines("if" if not lines else "else if")
+        lines.extend(territory_lines)
         if not lines:
             return ["// Brak zdefiniowanych komend", "return 0;"]
         lines.append("return 0;")
@@ -1846,6 +2125,189 @@ class GamemodeConfig:
             prefix = "else if"
         return lines
 
+    def _max_skill_levels(self) -> int:
+        return max((skill.level_count() for skill in self.skills), default=0)
+
+    def _skill_enum(self) -> str:
+        entries = ["SKILL_NONE = -1"] + [skill.constant for skill in self.skills]
+        entries.append("SKILL_COUNT")
+        formatted = ",\n    ".join(entries)
+        return "enum eSkillId {\n    " + formatted + "\n};"
+
+    def _skill_data_enum(self) -> str:
+        return "".join(
+            [
+                "enum eSkillData {\n",
+                "    SkillName[48],\n",
+                "    SkillDescription[144],\n",
+                "    SkillCommand[32],\n",
+                "    SkillLevelCount\n",
+                "};",
+            ]
+        )
+
+    def _skill_definitions(self) -> str:
+        if not self.skills:
+            return "// Brak zdefiniowanych umiejętności"
+        entries = ",\n".join(skill.array_entry() for skill in self.skills)
+        return "new gSkills[][eSkillData] = {\n" + entries + "\n};"
+
+    def _skill_level_requirements(self) -> str:
+        if not self.skills:
+            return "// Brak progów doświadczenia dla umiejętności"
+        max_levels = self._max_skill_levels()
+        rows = ",\n".join(skill.xp_row(max_levels) for skill in self.skills)
+        return (
+            "new gSkillLevelXp[SKILL_COUNT][SKILL_MAX_LEVELS] = {\n"
+            + rows
+            + "\n};"
+        )
+
+    def _skill_reward_messages(self) -> str:
+        if not self.skills:
+            return "// Brak komunikatów nagród umiejętności"
+        max_levels = self._max_skill_levels()
+        rows = ",\n".join(skill.reward_row(max_levels) for skill in self.skills)
+        return (
+            "new gSkillLevelMessages[SKILL_COUNT][SKILL_MAX_LEVELS][96] = {\n"
+            + rows
+            + "\n};"
+        )
+
+    def _skill_setup_lines(self) -> list[str]:
+        if not self.skills:
+            return ["printf(\"[AutoRP] Brak umiejętności do wczytania\");"]
+        return ["printf(\"[AutoRP] Dostępnych umiejętności: %d\", sizeof(gSkills));"]
+
+    def _skill_command_lines(self, initial_prefix: str) -> list[str]:
+        if not self.skills:
+            return []
+        prefix = initial_prefix
+        lines: list[str] = []
+        for index, skill in enumerate(self.skills):
+            block = skill.command_block(index, prefix)
+            lines.extend(block)
+            prefix = "else if"
+        return lines
+
+    def _skill_training_enum(self) -> str:
+        entries = [training.constant for training in self.skill_trainings]
+        entries.append("SKILL_TRAINING_COUNT")
+        formatted = ",\n    ".join(entries)
+        return "enum eSkillTrainingId {\n    " + formatted + "\n};"
+
+    def _skill_training_data_enum(self) -> str:
+        return "".join(
+            [
+                "enum eSkillTrainingData {\n",
+                "    TrainingName[48],\n",
+                "    TrainingDescription[128],\n",
+                "    TrainingCommand[32],\n",
+                "    TrainingSkillId,\n",
+                "    TrainingXpGain,\n",
+                "    TrainingCooldown,\n",
+                "    TrainingSuccessMessage[96]\n",
+                "};",
+            ]
+        )
+
+    def _skill_training_definitions(self) -> str:
+        if not self.skill_trainings:
+            return "// Brak zdefiniowanych treningów umiejętności"
+        skills = self.skill_lookup()
+        entries = ",\n".join(
+            training.array_entry(skills) for training in self.skill_trainings
+        )
+        return "new gSkillTrainings[][eSkillTrainingData] = {\n" + entries + "\n};"
+
+    def _skill_training_setup_lines(self) -> list[str]:
+        if not self.skill_trainings:
+            return ["printf(\"[AutoRP] Brak treningów umiejętności\");"]
+        return [
+            "printf(\"[AutoRP] Zarejestrowano treningi: %d\", sizeof(gSkillTrainings));",
+        ]
+
+    def _skill_training_command_lines(self, initial_prefix: str) -> list[str]:
+        if not self.skill_trainings:
+            return []
+        prefix = initial_prefix
+        lines: list[str] = []
+        for index, training in enumerate(self.skill_trainings):
+            block = training.command_block(index, prefix)
+            lines.extend(block)
+            prefix = "else if"
+        return lines
+
+    def _territory_enum(self) -> str:
+        if not self.territories:
+            return "enum eTerritoryId {\n    TERRITORY_COUNT = 0\n};"
+        entries = [territory.constant for territory in self.territories] + [
+            "TERRITORY_COUNT"
+        ]
+        formatted = ",\n    ".join(entries)
+        return "enum eTerritoryId {\n    " + formatted + "\n};"
+
+    def _territory_data_enum(self) -> str:
+        return "".join(
+            [
+                "enum eTerritoryData {\n",
+                "    TerritoryName[48],\n",
+                "    TerritoryDescription[160],\n",
+                "    Float:TerritoryX,\n",
+                "    Float:TerritoryY,\n",
+                "    Float:TerritoryZ,\n",
+                "    Float:TerritoryRadius,\n",
+                "    TerritoryOwnerFaction,\n",
+                "    TerritoryIncome,\n",
+                "    TerritoryCaptureTime,\n",
+                "    TerritoryRewardMoney,\n",
+                "    TerritoryInfoCommand[32],\n",
+                "    TerritoryCaptureCommand[32],\n",
+                "    TerritoryBroadcastMessage[160]\n",
+                "};",
+            ]
+        )
+
+    def _territory_definitions(self) -> str:
+        if not self.territories:
+            return "// Brak zdefiniowanych terytoriów"
+        factions = self.faction_lookup()
+        entries = ",\n".join(
+            territory.array_entry(factions) for territory in self.territories
+        )
+        return "new gTerritories[][eTerritoryData] = {\n" + entries + "\n};"
+
+    def _territory_setup_lines(self) -> list[str]:
+        if not self.territories:
+            return ["printf(\"[AutoRP] Brak terytoriów do zainicjalizowania\");"]
+        lines: list[str] = []
+        for index, territory in enumerate(self.territories):
+            lines.append(
+                f"    TerritoryOwners[{index}] = gTerritories[{index}][TerritoryOwnerFaction];"
+            )
+            lines.append(
+                f"    TerritoryCaptureStarter[{index}] = INVALID_PLAYER_ID;"
+            )
+            lines.append(
+                f'    printf("[AutoRP] Teren %s przygotowany", gTerritories[{index}][TerritoryName]);'
+            )
+        lines.append('    SetTimer("TickTerritories", 300000, true);')
+        return lines
+
+    def _territory_command_lines(self, initial_prefix: str) -> list[str]:
+        if not self.territories:
+            return []
+        prefix = initial_prefix
+        lines: list[str] = []
+        for index, territory in enumerate(self.territories):
+            info_block = territory.info_command_block(index, prefix)
+            lines.extend(info_block)
+            prefix = "else if"
+            capture_block = territory.capture_command_block(index, prefix)
+            lines.extend(capture_block)
+            prefix = "else if"
+        return lines
+
     def _weather_stage_definitions(self) -> str:
         lines = [
             "enum eWeatherStageData {",
@@ -1921,6 +2383,9 @@ class GamemodeConfig:
             "businesses": [business.name for business in self.businesses],
             "crafting_recipes": [recipe.name for recipe in self.crafting_recipes],
             "achievements": [achievement.name for achievement in self.achievements],
+            "skills": [skill.name for skill in self.skills],
+            "skill_trainings": [training.name for training in self.skill_trainings],
+            "territories": [territory.name for territory in self.territories],
             "weather_cycle": [stage.weather for stage in self.weather_cycle.stages]
             if self.weather_cycle
             else [],
@@ -1937,6 +2402,9 @@ class GamemodeConfig:
         event_handlers = self._event_handlers()
         if event_handlers:
             event_handlers += "\n"
+        skill_count = len(self.skills)
+        skill_training_count = len(self.skill_trainings)
+        skill_max_levels = self._max_skill_levels()
         return {
             "metadata_banner": (
                 f"/*\n    AutoRP generated gamemode\n    Name: {self.name}\n"
@@ -1991,6 +2459,27 @@ class GamemodeConfig:
             "achievement_enum": self._achievement_enum(),
             "achievement_definitions": self._achievement_definitions(),
             "achievement_setup": indent_lines(self._achievement_setup_lines(), level=1),
+            "skill_count": skill_count,
+            "skill_max_levels": skill_max_levels,
+            "skill_training_count": skill_training_count,
+            "skill_enum": self._skill_enum(),
+            "skill_data_enum": self._skill_data_enum(),
+            "skill_definitions": self._skill_definitions(),
+            "skill_level_requirements": self._skill_level_requirements(),
+            "skill_reward_messages": self._skill_reward_messages(),
+            "skill_setup": indent_lines(self._skill_setup_lines(), level=1),
+            "skill_training_enum": self._skill_training_enum(),
+            "skill_training_data_enum": self._skill_training_data_enum(),
+            "skill_training_definitions": self._skill_training_definitions(),
+            "skill_training_setup": indent_lines(
+                self._skill_training_setup_lines(), level=1
+            ),
+            "territory_enum": self._territory_enum(),
+            "territory_data_enum": self._territory_data_enum(),
+            "territory_definitions": self._territory_definitions(),
+            "territory_setup": indent_lines(
+                self._territory_setup_lines(), level=1
+            ),
             "weather_stage_definitions": self._weather_stage_definitions(),
             "weather_setup": indent_lines(self._weather_setup_lines(), level=1),
             "event_forwards": self._event_forwards(),
@@ -2023,6 +2512,10 @@ __all__ = [
     "CraftingRecipe",
     "CraftingIngredient",
     "Achievement",
+    "Skill",
+    "SkillLevel",
+    "SkillTraining",
+    "Territory",
     "WeatherStage",
     "WeatherCycle",
     "BotScenarioDefinition",

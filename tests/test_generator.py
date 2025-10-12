@@ -42,6 +42,9 @@ def test_generator_creates_file(tmp_path: Path, monkeypatch):
     assert "/craft_apteczka" in content
     assert "ApplyWeatherStage" in content
     assert "gBusinessPickups" in content
+    assert "/skill_strzelectwo" in content
+    assert "/trening_strzelnica" in content
+    assert "StartTerritoryCapture" in content
 
 
 def test_cli_prepares_server_package(tmp_path: Path, monkeypatch):
@@ -74,6 +77,9 @@ def test_cli_prepares_server_package(tmp_path: Path, monkeypatch):
     assert "Sklep Elektroniczny" in metadata["businesses"]
     assert "Apteczka Zaawansowana" in metadata["crafting_recipes"]
     assert "Pierwsza Służba" in metadata["achievements"]
+    assert "Strzelectwo" in metadata["skills"]
+    assert "Strzelnica Policyjna" in metadata["skill_trainings"]
+    assert "Plac Rządowy" in metadata["territories"]
     assert metadata["weather_cycle"] == [2, 1, 8]
 
     pawn_content = gamemode_path.read_text(encoding="utf-8")
@@ -88,6 +94,10 @@ def test_cli_prepares_server_package(tmp_path: Path, monkeypatch):
     assert "/quest_policja" in pawn_content
     assert "/craft_apteczka" in pawn_content
     assert "ApplyWeatherStage" in pawn_content
+    assert "HandleSkillTraining" in pawn_content
+    assert "/trening_medyczny" in pawn_content
+    assert "TickTerritories" in pawn_content
+    assert 'SetTimerEx("AdvanceTerritoryCapture"' in pawn_content
 
 
 def test_cli_exports_bot_scripts(tmp_path: Path, monkeypatch):

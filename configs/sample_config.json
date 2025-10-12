@@ -249,6 +249,79 @@
       "reward_money": 300
     }
   ],
+  "skills": [
+    {
+      "name": "Strzelectwo",
+      "description": "Kontrola broni krótkiej i celność na strzelnicy.",
+      "command": "/skill_strzelectwo",
+      "levels": [
+        {"xp": 120, "message": "Odblokowujesz dodatkowe magazynki na patrolach."},
+        {"xp": 280, "message": "Strzelasz pewniej podczas pościgu samochodowego."},
+        {"xp": 520, "message": "Twoja broń zachowuje stabilność nawet przy ogniu ciągłym."}
+      ]
+    },
+    {
+      "name": "Medycyna Polowa",
+      "description": "Praktyczne umiejętności opatrywania rannych w terenie.",
+      "command": "/skill_medycyna",
+      "levels": [
+        {"xp": 90, "message": "Stabilizujesz pacjentów szybciej o 10%."},
+        {"xp": 240, "message": "Odblokowujesz dostęp do zaawansowanych zestawów opatrunkowych."}
+      ]
+    }
+  ],
+  "skill_trainings": [
+    {
+      "name": "Strzelnica Policyjna",
+      "skill": "Strzelectwo",
+      "command": "/trening_strzelnica",
+      "xp_gain": 40,
+      "cooldown": 150,
+      "description": "Oddaj serię kontrolowanych strzałów wraz z instruktorem.",
+      "success_message": "Instruktor chwali Twoją celność i skupienie."
+    },
+    {
+      "name": "Warsztat Medyczny",
+      "skill": "Medycyna Polowa",
+      "command": "/trening_medyczny",
+      "xp_gain": 45,
+      "cooldown": 180,
+      "description": "Przeprowadź symulację akcji ratunkowej na fantomie.",
+      "success_message": "Zespół ufa Twoim nowym procedurom ratunkowym."
+    }
+  ],
+  "territories": [
+    {
+      "name": "Plac Rządowy",
+      "description": "Strategiczny teren przy ratuszu generujący premie dla służb porządkowych.",
+      "x": 1481.52,
+      "y": -1752.24,
+      "z": 13.55,
+      "radius": 25.0,
+      "owner_faction": "Policja",
+      "income": 400,
+      "capture_time": 45,
+      "reward_money": 300,
+      "info_command": "/teren_ratusz",
+      "capture_command": "/przejmij_ratusz",
+      "broadcast_message": "Plac rządowy zmienia barwy!"
+    },
+    {
+      "name": "Rynek Medyczny",
+      "description": "Zespół helipadów i punktów pomocy medycznej w centrum miasta.",
+      "x": 1178.44,
+      "y": -1320.12,
+      "z": 14.60,
+      "radius": 20.0,
+      "owner_faction": "Medycy",
+      "income": 320,
+      "capture_time": 60,
+      "reward_money": 250,
+      "info_command": "/teren_medycy",
+      "capture_command": "/przejmij_medycy",
+      "broadcast_message": "Kontrola nad rynkiem usług medycznych została przejęta!"
+    }
+  ],
   "events": [
     {
       "name": "payday",
