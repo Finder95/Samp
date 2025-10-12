@@ -6,11 +6,19 @@ Repozytorium zawiera narzędzie **AutoRP**, które potrafi wygenerować kompletn
 gamemodu RolePlay dla SA-MP – od pliku Pawn, przez konfigurację serwera, aż po szkielety
 automatycznych testów z wykorzystaniem botów sterujących klientem GTA:SA.
 
+Konfiguracja (w formacie JSON) opisuje cały świat gry: frakcje, pojazdy, zadania, pickupy,
+nieruchomości z punktami wejścia/wyjścia, NPC-ów z dialogami oraz harmonogramy zdarzeń.
+AutoRP tłumaczy je na gotowe struktury Pawn, timery i komendy zarządzające gospodarką RP.
+
 ### Najważniejsze funkcje
 - elastyczna konfiguracja w JSON-ie opisująca frakcje, punkty odrodzeń, pojazdy,
   komendy i parametry świata;
 - generator Pawn tworzący gotowy do kompilacji gamemode z obsługą frakcji, komend,
   pakietów startowych, ekonomii, ekwipunku oraz logów inicjalizacyjnych;
+- automatyczne przygotowanie nieruchomości z pickupami i komendami zakupu oraz NPC-ów
+  z konfigurowalnymi dialogami i kontrolą dostępu frakcyjnego;
+- definiowanie cyklicznych eventów (np. premie służbowe, loterie) wykonywanych poprzez
+  timery wraz z broadcastami, komendami RCON oraz nagrodami pieniężnymi;
 - przygotowanie kompletnej paczki serwerowej (`server.cfg`, metadane) jednym poleceniem;
 - opcjonalna kompilacja do pliku AMX (wymagany `pawncc` w systemie);
 - orkiestrator testów zdolny do uruchamiania lokalnego serwera SA-MP i sterowania botami;

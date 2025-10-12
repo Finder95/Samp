@@ -32,6 +32,10 @@ def test_generator_creates_file(tmp_path: Path, monkeypatch):
     assert "PlayerJob[MAX_PLAYERS]" in content
     assert "SetupEconomy" in content
     assert "HandleJobPaycheck" in content
+    assert "PROPERTY_KOMISARIAT_DOWNTOWN" in content
+    assert "/kup_komisariat" in content
+    assert "CreateActor(280" in content
+    assert "HandleScheduledEvent_PAYDAY" in content
 
 
 def test_cli_prepares_server_package(tmp_path: Path, monkeypatch):
@@ -57,12 +61,18 @@ def test_cli_prepares_server_package(tmp_path: Path, monkeypatch):
     assert "/sluzba" in metadata["commands"]
     assert "Policjant" in metadata["jobs"]
     assert "Apteczka" in metadata["items"]
+    assert "Komisariat Downtown" in metadata["properties"]
+    assert "Oficer Kowalski" in metadata["npcs"]
+    assert "payday" in metadata["events"]
 
     pawn_content = gamemode_path.read_text(encoding="utf-8")
     assert "AddStaticVehicleEx(596" in pawn_content
     assert 'SendClientMessage(playerid, 0xAA3333FF, "Brak dostępu do tej komendy.");' in pawn_content
     assert 'SetTimerEx("HandleJobPaycheck", floatround(gEconomy[EconomyInterval])' in pawn_content
     assert "CreatePickup(1240" in pawn_content
+    assert "gPropertyPickups" in pawn_content
+    assert "SendClientMessageToAll(0x33AA33FF, \"[Event] Automatyczny bonus służbowy został wypłacony.\");" in pawn_content
+    assert "SetTimer(\"HandleScheduledEvent_PAYDAY\"" in pawn_content
 
 
 def test_cli_exports_bot_scripts(tmp_path: Path, monkeypatch):

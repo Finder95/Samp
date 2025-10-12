@@ -16,6 +16,16 @@ $job_enum
 
 $economy_definitions
 
+$property_enum
+
+$property_definitions
+
+$property_pickup_array
+
+$npc_enum
+
+$npc_actor_array
+
 new PlayerFaction[MAX_PLAYERS];
 new PlayerJob[MAX_PLAYERS];
 
@@ -50,7 +60,12 @@ forward SetupSpawns();
 forward SetupVehicles();
 forward SetupJobs();
 forward SetupPickups();
+forward SetupProperties();
+forward SetupNpcs();
+forward SetupEvents();
 forward HandleJobPaycheck(playerid, salary);
+forward HandlePropertyPurchase(playerid, propertyid);
+$event_forwards
 
 public OnGameModeInit()
 {
@@ -65,6 +80,9 @@ $world_setup
     SetupVehicles();
     SetupJobs();
     SetupPickups();
+    SetupProperties();
+    SetupNpcs();
+    SetupEvents();
     return 1;
 }
 
@@ -116,6 +134,24 @@ $pickup_setup
     return 1;
 }
 
+SetupProperties()
+{
+$property_setup
+    return 1;
+}
+
+SetupNpcs()
+{
+$npc_setup
+    return 1;
+}
+
+SetupEvents()
+{
+$event_setup
+    return 1;
+}
+
 public OnPlayerConnect(playerid)
 {
     PlayerFaction[playerid] = $default_faction_constant;
@@ -129,6 +165,11 @@ public OnPlayerDisconnect(playerid, reason)
     PlayerFaction[playerid] = $default_faction_constant;
     PlayerJob[playerid] = JOB_NONE;
     return 1;
+}
+
+public OnPlayerPickUpPickup(playerid, pickupid)
+{
+$property_pickup_handlers
 }
 
 public OnPlayerCommandText(playerid, cmdtext[])
@@ -148,3 +189,16 @@ public HandleJobPaycheck(playerid, salary)
     SendClientMessage(playerid, 0x33AA33FF, msg);
     return 1;
 }
+
+public HandlePropertyPurchase(playerid, propertyid)
+{
+    #pragma unused propertyid
+    if(!IsPlayerConnected(playerid))
+    {
+        return 0;
+    }
+    SendClientMessage(playerid, 0x33AA33FF, "System zakupu nieruchomości nie został jeszcze zaimplementowany.");
+    return 1;
+}
+
+$event_handlers

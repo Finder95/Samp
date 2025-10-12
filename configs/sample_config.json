@@ -51,6 +51,52 @@
     {"model": 1240, "type": 2, "x": 1555.24, "y": -1675.32, "z": 16.12, "world": 0, "respawn": 45},
     {"model": 1242, "type": 3, "x": 1174.72, "y": -1323.88, "z": 14.54, "world": 0, "respawn": 60}
   ],
+  "properties": [
+    {
+      "name": "Komisariat Downtown",
+      "description": "Bazowe zaplecze frakcji policyjnej",
+      "price": 125000,
+      "entrance": {"x": 1553.12, "y": -1675.48, "z": 16.10, "world": 0, "interior": 0, "angle": 180.0},
+      "interior": {"x": 246.78, "y": 109.39, "z": 1003.21, "world": 1, "interior": 10, "angle": 90.0},
+      "required_faction": "Policja",
+      "purchase_command": "/kup_komisariat"
+    },
+    {
+      "name": "Ambulatorium",
+      "description": "Niewielka placówka medyczna na start frakcji",
+      "price": 98000,
+      "entrance": {"x": 1178.02, "y": -1325.11, "z": 14.39, "world": 0, "interior": 0, "angle": 0.0},
+      "interior": {"x": 203.63, "y": 75.19, "z": 1005.26, "world": 2, "interior": 3, "angle": 0.0}
+    }
+  ],
+  "npcs": [
+    {
+      "name": "Oficer Kowalski",
+      "skin": 280,
+      "x": 1551.82,
+      "y": -1673.21,
+      "z": 16.00,
+      "angle": 180.0,
+      "dialogue": [
+        "Dzień dobry! Tutaj odbierzesz wyposażenie i raporty.",
+        "Zanim wyjedziesz na patrol upewnij się, że masz kamizelkę."
+      ],
+      "command": "/rozmowa_policja",
+      "faction": "Policja"
+    },
+    {
+      "name": "Doktor Nowak",
+      "skin": 70,
+      "x": 1180.55,
+      "y": -1323.44,
+      "z": 13.56,
+      "angle": 0.0,
+      "dialogue": [
+        "Trzymaj apteczkę i pamiętaj o uzupełnianiu leków.",
+        "Mamy dziś sporo zgłoszeń z centrum miasta."
+      ]
+    }
+  ],
   "commands": [
     {
       "trigger": "/pomoc",
@@ -92,6 +138,25 @@
         {"type": "wait", "seconds": 1.5},
         {"type": "command", "value": "/szpital"}
       ]
+    }
+  ],
+  "events": [
+    {
+      "name": "payday",
+      "interval_ms": 600000,
+      "announce": [
+        "Automatyczny bonus służbowy został wypłacony.",
+        "Sprawdź konto bankowe u skarbnika!"
+      ],
+      "grant_money": 250,
+      "target_faction": "Policja"
+    },
+    {
+      "name": "city_lottery",
+      "interval_ms": 900000,
+      "announce": "Losowanie miejskiej loterii!",
+      "grant_money": 150,
+      "rcon_command": "echo [AutoRP] Przeprowadzono loterię"
     }
   ],
   "economy": {

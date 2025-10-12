@@ -275,6 +275,290 @@ class Pickup:
 
 
 @dataclass(slots=True)
+class PropertyPoint:
+    """Entrance or exit point for a property."""
+
+    x: float
+    y: float
+    z: float
+    interior: int = 0
+    world: int = 0
+    angle: float = 0.0
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "PropertyPoint":
+        return cls(
+            x=data.get("x", 0.0),
+            y=data.get("y", 0.0),
+            z=data.get("z", 0.0),
+            interior=data.get("interior", 0),
+            world=data.get("world", 0),
+            angle=data.get("angle", 0.0),
+        )
+
+    def format_coords(self) -> tuple[str, str, str]:
+        return (f"{self.x}", f"{self.y}", f"{self.z}")
+
+    def format_angle(self) -> str:
+        return f"{self.angle}"
+
+
+@dataclass(slots=True)
+class Property:
+    """Describes a buyable property with a world entrance."""
+
+    name: str
+    description: str
+    price: int
+    entrance: PropertyPoint
+    interior: PropertyPoint
+    required_faction: str | None = None
+    pickup_model: int = 1273
+    pickup_type: int = 1
+    pickup_respawn: int = 30
+    purchase_command: str | None = None
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "Property":
+        entrance = PropertyPoint.from_dict(data.get("entrance", {}))
+        interior = PropertyPoint.from_dict(data.get("interior", {}))
+        return cls(
+            name=data["name"],
+            description=data.get("description", data["name"]),
+            price=data.get("price", 0),
+            entrance=entrance,
+            interior=interior,
+            required_faction=data.get("required_faction"),
+            pickup_model=data.get("pickup_model", 1273),
+            pickup_type=data.get("pickup_type", 1),
+            pickup_respawn=data.get("pickup_respawn", 30),
+            purchase_command=data.get("purchase_command"),
+        )
+
+    def __post_init__(self) -> None:
+        if self.purchase_command and not self.purchase_command.startswith("/"):
+            self.purchase_command = "/" + self.purchase_command
+
+    @property
+    def constant(self) -> str:
+        return f"PROPERTY_{sanitize_identifier(self.name)}"
+
+    def _faction_constant(self) -> str:
+        if not self.required_faction:
+            return "INVALID_FACTION"
+        return f"FACTION_{sanitize_identifier(self.required_faction)}"
+
+    def command_trigger(self) -> str:
+        if self.purchase_command:
+            return self.purchase_command
+        base = sanitize_identifier(self.name).lower()
+        return f"/kup_{base}"
+
+    def array_entry(self) -> str:
+        name = escape_pawn_string(self.name)
+        description = escape_pawn_string(self.description)
+        entrance_x, entrance_y, entrance_z = self.entrance.format_coords()
+        interior_x, interior_y, interior_z = self.interior.format_coords()
+        return (
+            "    {"
+            f'"{name}", "{description}", '
+            f"{entrance_x}, {entrance_y}, {entrance_z}, {self.entrance.format_angle()}, "
+            f"{self.entrance.interior}, {self.entrance.world}, "
+            f"{interior_x}, {interior_y}, {interior_z}, {self.interior.format_angle()}, "
+            f"{self.interior.interior}, {self.interior.world}, {self.price}, {self._faction_constant()}"
+            "}"
+        )
+
+    def pickup_setup_line(self) -> str:
+        return (
+            f"    gPropertyPickups[{self.constant}] = CreatePickup("
+            f"{self.pickup_model}, {self.pickup_type}, {self.entrance.x}, {self.entrance.y}, {self.entrance.z}, {self.entrance.world}, {self.pickup_respawn});"
+        )
+
+    def command_block(self, prefix: str, factions: dict[str, Faction]) -> list[str]:
+        trigger = escape_pawn_string(self.command_trigger())
+        lines = [f"{prefix}(!strcmp(cmdtext, \"{trigger}\", true))", "{"]
+        faction_guard = factions.get(self.required_faction) if self.required_faction else None
+        if faction_guard:
+            lines.extend(
+                [
+                    f"    if (PlayerFaction[playerid] != {faction_guard.constant})",
+                    "    {",
+                    '        SendClientMessage(playerid, 0xAA3333FF, "Tylko odpowiednia frakcja może kupić tę nieruchomość.");',
+                    "        return 1;",
+                    "    }",
+                ]
+            )
+        lines.extend(
+            [
+                "    new info[160];",
+                f"    format(info, sizeof(info), \"Oferta: %s - cena: %d$\", gProperties[{self.constant}][PropertyName], gProperties[{self.constant}][PropertyPrice]);",
+                "    SendClientMessage(playerid, 0x55FF55FF, info);",
+                f"    SendClientMessage(playerid, 0xFFFFFFFF, gProperties[{self.constant}][PropertyDescription]);",
+                f"    return HandlePropertyPurchase(playerid, {self.constant});",
+                "}",
+            ]
+        )
+        return lines
+
+
+@dataclass(slots=True)
+class Npc:
+    """Non-playable character spawned for flavour and automation."""
+
+    name: str
+    skin: int
+    x: float
+    y: float
+    z: float
+    angle: float = 0.0
+    dialogue: Sequence[str] = field(default_factory=list)
+    command: str | None = None
+    faction: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.command and not self.command.startswith("/"):
+            self.command = "/" + self.command
+
+    @property
+    def constant(self) -> str:
+        return f"NPC_{sanitize_identifier(self.name)}"
+
+    def command_trigger(self) -> str:
+        if self.command:
+            return self.command
+        return f"/rozmowa_{sanitize_identifier(self.name).lower()}"
+
+    def spawn_lines(self) -> list[str]:
+        safe_name = escape_pawn_string(self.name)
+        return [
+            f"    gNpcActors[{self.constant}] = CreateActor({self.skin}, {self.x}, {self.y}, {self.z}, {self.angle});",
+            f'    printf("[AutoRP] NPC %s zainicjalizowany", "{safe_name}");',
+        ]
+
+    def dialogue_lines(self) -> list[str]:
+        lines: list[str] = []
+        colour = "0xFFE4B5FF"
+        prefix = escape_pawn_string(self.name)
+        for message in self.dialogue:
+            escaped = escape_pawn_string(message)
+            lines.append(
+                f'    SendClientMessage(playerid, {colour}, "[{prefix}] {escaped}");'
+            )
+        if not lines:
+            lines.append(
+                f'    SendClientMessage(playerid, {colour}, "[{prefix}] Miłego dnia!");'
+            )
+        return lines
+
+    def command_block(self, prefix: str, factions: dict[str, Faction]) -> list[str]:
+        trigger = escape_pawn_string(self.command_trigger())
+        block = [f"{prefix}(!strcmp(cmdtext, \"{trigger}\", true))", "{"]
+        if self.faction:
+            faction = factions.get(self.faction)
+            if faction:
+                block.extend(
+                    [
+                        f"    if (PlayerFaction[playerid] != {faction.constant})",
+                        "    {",
+                        '        SendClientMessage(playerid, 0xAA3333FF, "Tylko odpowiednia frakcja może porozmawiać z tym NPC.");',
+                        "        return 1;",
+                        "    }",
+                    ]
+                )
+        block.extend(self.dialogue_lines())
+        block.append("    return 1;")
+        block.append("}")
+        return block
+
+
+@dataclass(slots=True)
+class ScheduledEvent:
+    """Recurring scripted event executed on a timer."""
+
+    name: str
+    interval_ms: int
+    announce: Sequence[str] = field(default_factory=list)
+    grant_money: int | None = None
+    target_faction: str | None = None
+    rcon_command: str | None = None
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "ScheduledEvent":
+        announce = data.get("announce")
+        if isinstance(announce, str):
+            announce = [announce]
+        return cls(
+            name=data["name"],
+            interval_ms=data.get("interval_ms", data.get("interval", 60000)),
+            announce=tuple(announce or ()),
+            grant_money=data.get("grant_money"),
+            target_faction=data.get("target_faction"),
+            rcon_command=data.get("rcon_command"),
+        )
+
+    @property
+    def constant(self) -> str:
+        return f"EVENT_{sanitize_identifier(self.name)}"
+
+    def forward(self) -> str:
+        return f"forward {self.handler_name()}();"
+
+    def handler_name(self) -> str:
+        return f"HandleScheduledEvent_{sanitize_identifier(self.name)}"
+
+    def timer_setup_line(self) -> str:
+        return f'    SetTimer("{self.handler_name()}", {self.interval_ms}, true);'
+
+    def handler_block(self, factions: dict[str, Faction]) -> str:
+        lines: list[str] = [f"public {self.handler_name()}()", "{"]
+        for message in self.announce:
+            escaped = escape_pawn_string(message)
+            lines.append(
+                f'    SendClientMessageToAll(0x33AA33FF, "[Event] {escaped}");'
+            )
+        if self.grant_money is not None:
+            if self.target_faction:
+                faction = factions.get(self.target_faction)
+                if faction:
+                    lines.extend(
+                        [
+                            "    for (new playerid = 0; playerid < MAX_PLAYERS; playerid++)",
+                            "    {",
+                            "        if(!IsPlayerConnected(playerid))",
+                            "        {",
+                            "            continue;",
+                            "        }",
+                            f"        if (PlayerFaction[playerid] != {faction.constant})",
+                            "        {",
+                            "            continue;",
+                            "        }",
+                            f"        GivePlayerMoney(playerid, {self.grant_money});",
+                            "    }",
+                        ]
+                    )
+            else:
+                lines.extend(
+                    [
+                        "    for (new playerid = 0; playerid < MAX_PLAYERS; playerid++)",
+                        "    {",
+                        "        if(!IsPlayerConnected(playerid))",
+                        "        {",
+                        "            continue;",
+                        "        }",
+                        f"        GivePlayerMoney(playerid, {self.grant_money});",
+                        "    }",
+                    ]
+                )
+        if self.rcon_command:
+            command = escape_pawn_string(self.rcon_command)
+            lines.append(f'    SendRconCommand("{command}");')
+        lines.append("    return 1;")
+        lines.append("}")
+        return "\n".join(lines)
+
+
+@dataclass(slots=True)
 class BotScenarioDefinition:
     """Configuration of a bot scenario to be materialised as a BotScript."""
 
@@ -374,6 +658,9 @@ class GamemodeConfig:
     jobs: Sequence[Job] = field(default_factory=list)
     pickups: Sequence[Pickup] = field(default_factory=list)
     scenarios: Sequence[BotScenarioDefinition] = field(default_factory=list)
+    properties: Sequence[Property] = field(default_factory=list)
+    npcs: Sequence[Npc] = field(default_factory=list)
+    events: Sequence[ScheduledEvent] = field(default_factory=list)
     server_settings: ServerSettings = field(default_factory=ServerSettings)
     world_settings: WorldSettings = field(default_factory=WorldSettings)
     economy: EconomySettings = field(default_factory=EconomySettings)
@@ -397,6 +684,9 @@ class GamemodeConfig:
             for j in data.get("jobs", [])
         ]
         pickups = [Pickup(**p) for p in data.get("pickups", [])]
+        properties = [Property.from_dict(p) for p in data.get("properties", [])]
+        npcs = [Npc(**npc) for npc in data.get("npcs", [])]
+        events = [ScheduledEvent.from_dict(e) for e in data.get("events", [])]
         scenarios = [BotScenarioDefinition.from_dict(s) for s in data.get("bot_scenarios", [])]
         server_settings = ServerSettings(**data.get("server", {}))
         world_settings = WorldSettings(**data.get("world", {}))
@@ -416,6 +706,9 @@ class GamemodeConfig:
             items=items,
             jobs=jobs,
             pickups=pickups,
+            properties=properties,
+            npcs=npcs,
+            events=events,
             scenarios=scenarios,
             server_settings=server_settings,
             world_settings=world_settings,
@@ -504,6 +797,12 @@ class GamemodeConfig:
 
         job_lines = self._job_command_lines("if" if not lines else "else if")
         lines.extend(job_lines)
+
+        property_lines = self._property_command_lines("if" if not lines else "else if")
+        lines.extend(property_lines)
+
+        npc_lines = self._npc_command_lines("if" if not lines else "else if")
+        lines.extend(npc_lines)
         if not lines:
             return ["// Brak zdefiniowanych komend", "return 0;"]
         lines.append("return 0;")
@@ -579,6 +878,135 @@ class GamemodeConfig:
             return ["// Brak pickupów"]
         return [pickup.to_pawn() for pickup in self.pickups]
 
+    def _property_enum(self) -> str:
+        if not self.properties:
+            return "enum ePropertyId { PROPERTY_COUNT = 0 };"
+        entries = [prop.constant for prop in self.properties] + ["PROPERTY_COUNT"]
+        formatted = ",\n    ".join(entries)
+        return "enum ePropertyId {\n    " + formatted + "\n};"
+
+    def _property_definitions(self) -> str:
+        if not self.properties:
+            return "// Brak zdefiniowanych nieruchomości"
+        body = ",\n".join(prop.array_entry() for prop in self.properties)
+        return (
+            "enum ePropertyData {\n"
+            "    PropertyName[48],\n"
+            "    PropertyDescription[128],\n"
+            "    Float:PropertyEntranceX,\n"
+            "    Float:PropertyEntranceY,\n"
+            "    Float:PropertyEntranceZ,\n"
+            "    Float:PropertyEntranceAngle,\n"
+            "    PropertyEntranceInterior,\n"
+            "    PropertyEntranceWorld,\n"
+            "    Float:PropertyExitX,\n"
+            "    Float:PropertyExitY,\n"
+            "    Float:PropertyExitZ,\n"
+            "    Float:PropertyExitAngle,\n"
+            "    PropertyExitInterior,\n"
+            "    PropertyExitWorld,\n"
+            "    PropertyPrice,\n"
+            "    PropertyFaction\n"
+            "};\n\n"
+            "new gProperties[][ePropertyData] = {\n"
+            f"{body}\n"
+            "};"
+        )
+
+    def _property_pickup_array(self) -> str:
+        if not self.properties:
+            return "// Brak nieruchomości - brak tablic pickupów"
+        return "new gPropertyPickups[PROPERTY_COUNT];"
+
+    def _property_setup_lines(self) -> list[str]:
+        if not self.properties:
+            return ["printf(\"[AutoRP] Brak nieruchomości do inicjalizacji\");"]
+        lines: list[str] = []
+        for prop in self.properties:
+            lines.append(prop.pickup_setup_line())
+            lines.append(
+                f'    printf("[AutoRP] Zarejestrowano nieruchomość: %s", gProperties[{prop.constant}][PropertyName]);'
+            )
+        return lines
+
+    def _property_pickup_handlers(self) -> list[str]:
+        if not self.properties:
+            return ["    return 1; // Brak nieruchomości"]
+        return [
+            "    for (new i = 0; i < PROPERTY_COUNT; i++)",
+            "    {",
+            "        if (gPropertyPickups[i] == pickupid)",
+            "        {",
+            "            new info[160];",
+            "            format(info, sizeof(info), \"Nieruchomość: %s - cena: %d$\", gProperties[i][PropertyName], gProperties[i][PropertyPrice]);",
+            "            SendClientMessage(playerid, 0x55FF55FF, info);",
+            "            SendClientMessage(playerid, 0xFFFFFFFF, gProperties[i][PropertyDescription]);",
+            "            return 1;",
+            "        }",
+            "    }",
+            "    return 1;",
+        ]
+
+    def _property_command_lines(self, initial_prefix: str) -> list[str]:
+        if not self.properties:
+            return []
+        lines: list[str] = []
+        prefix = initial_prefix
+        factions = self.faction_lookup()
+        for prop in self.properties:
+            block = prop.command_block(prefix, factions)
+            lines.extend(block)
+            prefix = "else if"
+        return lines
+
+    def _npc_enum(self) -> str:
+        if not self.npcs:
+            return "enum eNpcId { NPC_COUNT = 0 };"
+        entries = [npc.constant for npc in self.npcs] + ["NPC_COUNT"]
+        formatted = ",\n    ".join(entries)
+        return "enum eNpcId {\n    " + formatted + "\n};"
+
+    def _npc_actor_array(self) -> str:
+        if not self.npcs:
+            return "// Brak NPC do utworzenia"
+        return "new gNpcActors[NPC_COUNT];"
+
+    def _npc_setup_lines(self) -> list[str]:
+        if not self.npcs:
+            return ["printf(\"[AutoRP] Brak NPC do inicjalizacji\");"]
+        lines: list[str] = []
+        for npc in self.npcs:
+            lines.extend(npc.spawn_lines())
+        return lines
+
+    def _npc_command_lines(self, initial_prefix: str) -> list[str]:
+        if not self.npcs:
+            return []
+        lines: list[str] = []
+        prefix = initial_prefix
+        factions = self.faction_lookup()
+        for npc in self.npcs:
+            block = npc.command_block(prefix, factions)
+            lines.extend(block)
+            prefix = "else if"
+        return lines
+
+    def _event_forwards(self) -> str:
+        if not self.events:
+            return "// Brak zaplanowanych eventów"
+        return "\n".join(event.forward() for event in self.events)
+
+    def _event_setup_lines(self) -> list[str]:
+        if not self.events:
+            return ["printf(\"[AutoRP] Brak eventów do zarejestrowania\");"]
+        return [event.timer_setup_line() for event in self.events]
+
+    def _event_handlers(self) -> str:
+        if not self.events:
+            return "// Brak obsługi zdarzeń"
+        factions = self.faction_lookup()
+        return "\n\n".join(event.handler_block(factions) for event in self.events)
+
     def bot_scripts(self) -> list["BotScript"]:
         from .tester import BotScript
 
@@ -611,10 +1039,19 @@ class GamemodeConfig:
             "commands": [cmd.trigger for cmd in self.commands],
             "jobs": [job.name for job in self.jobs],
             "items": [item.name for item in self.items],
+            "properties": [prop.name for prop in self.properties],
+            "npcs": [npc.name for npc in self.npcs],
+            "events": [event.name for event in self.events],
         }
         return json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
 
     def pawn_context(self) -> dict:
+        property_pickup_handlers = "\n".join(self._property_pickup_handlers())
+        if property_pickup_handlers:
+            property_pickup_handlers += "\n"
+        event_handlers = self._event_handlers()
+        if event_handlers:
+            event_handlers += "\n"
         return {
             "metadata_banner": (
                 f"/*\n    AutoRP generated gamemode\n    Name: {self.name}\n"
@@ -646,6 +1083,17 @@ class GamemodeConfig:
             "job_enum": self._job_enum(),
             "job_task_definitions": "\n".join(self._job_task_definitions()),
             "pickup_setup": indent_lines(self._pickup_lines(), level=1),
+            "property_enum": self._property_enum(),
+            "property_definitions": self._property_definitions(),
+            "property_pickup_array": self._property_pickup_array(),
+            "property_setup": indent_lines(self._property_setup_lines(), level=1),
+            "property_pickup_handlers": property_pickup_handlers,
+            "npc_enum": self._npc_enum(),
+            "npc_actor_array": self._npc_actor_array(),
+            "npc_setup": indent_lines(self._npc_setup_lines(), level=1),
+            "event_forwards": self._event_forwards(),
+            "event_setup": indent_lines(self._event_setup_lines(), level=1),
+            "event_handlers": event_handlers,
         }
 
 
@@ -663,5 +1111,9 @@ __all__ = [
     "Job",
     "JobTask",
     "Pickup",
+    "Property",
+    "PropertyPoint",
+    "Npc",
+    "ScheduledEvent",
     "BotScenarioDefinition",
 ]
