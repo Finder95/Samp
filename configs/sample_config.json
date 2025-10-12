@@ -1,0 +1,124 @@
+{
+  "name": "AutoRP",
+  "description": "Zaawansowany gamemode generowany automatycznie",
+  "author": "Zespół AutoRP",
+  "welcome_message": "Witamy na AutoRP! Przeczytaj regulamin i baw się dobrze.",
+  "default_faction": "Policja",
+  "factions": [
+    {"name": "Policja", "description": "Pilnuje porządku w mieście", "colour": "0x2645FFFF"},
+    {"name": "Medycy", "description": "Udzielają pomocy medycznej", "colour": "0x6BE26BFF"},
+    {"name": "News", "description": "Przekazują informacje mieszkańcom", "colour": "#FFB300"}
+  ],
+  "spawn_points": [
+    {"x": 1958.3783, "y": 1343.1572, "z": 15.3746, "angle": 270.0},
+    {"x": 1480.561, "y": -1753.208, "z": 13.5469, "angle": 90.0}
+  ],
+  "vehicles": [
+    {"model": 596, "x": 1576.42, "y": -1635.24, "z": 13.382, "rotation": 90.0, "colour1": 0, "colour2": 1, "respawn_delay": 120},
+    {"model": 416, "x": 1182.25, "y": -1325.42, "z": 13.56, "rotation": 0.0, "colour1": 1, "colour2": 3, "respawn_delay": 120}
+  ],
+  "items": [
+    {"name": "Apteczka", "description": "Jednorazowe wyleczenie 50HP", "price": 250, "weight": 0.4},
+    {"name": "Radio", "description": "Komunikacja głosowa frakcji", "price": 150, "weight": 0.2},
+    {"name": "Laptop", "description": "Dostęp do panelu frakcyjnego", "price": 1200, "weight": 2.0}
+  ],
+  "jobs": [
+    {
+      "name": "Policjant",
+      "description": "Patrolowanie ulic miasta",
+      "salary": 600,
+      "join_command": "/dolacz_police",
+      "required_faction": "Policja",
+      "tasks": [
+        {"description": "Odwiedź komisariat i pobierz wyposażenie", "reward": 50, "command_hint": "/sluzba"},
+        {"description": "Zatrzymaj przestępcę na czerwonej strefie", "reward": 100},
+        {"description": "Patroluj centrum miasta przez 5 minut", "reward": 150}
+      ]
+    },
+    {
+      "name": "Ratownik",
+      "description": "Obsługa nagłych zgłoszeń medycznych",
+      "salary": 550,
+      "join_command": "/dolacz_medic",
+      "required_faction": "Medycy",
+      "tasks": [
+        {"description": "Wybierz ambulans i przygotuj wyposażenie", "reward": 50},
+        {"description": "Dowieź pacjenta do szpitala", "reward": 120}
+      ]
+    }
+  ],
+  "pickups": [
+    {"model": 1240, "type": 2, "x": 1555.24, "y": -1675.32, "z": 16.12, "world": 0, "respawn": 45},
+    {"model": 1242, "type": 3, "x": 1174.72, "y": -1323.88, "z": 14.54, "world": 0, "respawn": 60}
+  ],
+  "commands": [
+    {
+      "trigger": "/pomoc",
+      "responses": [
+        "=== Lista komend ===",
+        "/sluzba - rozpocznij służbę w swojej frakcji",
+        "/szpital - teleport do szpitala",
+        "/ekonomia - podgląd stawek wypłat"
+      ]
+    },
+    {
+      "trigger": "/sluzba",
+      "responses": ["Rozpoczynasz służbę."],
+      "grant_money": 500,
+      "required_faction": "Policja"
+    },
+    {
+      "trigger": "/szpital",
+      "responses": ["Teleportujemy cię do szpitala."],
+      "teleport": {"x": 1181.58, "y": -1324.36, "z": 13.57}
+    },
+    {
+      "trigger": "/ekonomia",
+      "responses": [
+        "Wypłata bazowa: 600$",
+        "Podatek: 5%",
+        "Domyślne konto bankowe: 1000$"
+      ]
+    }
+  ],
+  "bot_scenarios": [
+    {
+      "name": "police_patrol",
+      "description": "Bot sprawdza dołączenie do policji i teleport",
+      "steps": [
+        {"type": "command", "value": "/pomoc"},
+        {"type": "chat", "message": "Dzień dobry, rozpoczynam patrol."},
+        {"type": "command", "value": "/dolacz_police"},
+        {"type": "wait", "seconds": 1.5},
+        {"type": "command", "value": "/szpital"}
+      ]
+    }
+  ],
+  "economy": {
+    "base_paycheck": 600,
+    "paycheck_interval": 180000,
+    "tax_rate": 0.05,
+    "default_bank_balance": 1000
+  },
+  "server": {
+    "hostname": "AutoRP Development",
+    "rcon_password": "superHaslo123",
+    "port": 7777,
+    "max_players": 100,
+    "language": "pl",
+    "weburl": "autorprp.local",
+    "announce": 0,
+    "lanmode": 1,
+    "filterscripts": ["npc_record", "mapfix"],
+    "plugins": ["crashdetect", "streamer"]
+  },
+  "world": {
+    "time": 12,
+    "weather": 2,
+    "gravity": 0.0075,
+    "stunt_bonus": false,
+    "interior_enter_exits": false,
+    "name_tag_draw_distance": 30.0,
+    "use_player_ped_anims": true
+  }
+}

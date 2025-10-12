@@ -1,37 +1,50 @@
 # Samp
 
-## Rozwiazywanie problemu z komunikatem "To rewrite commits in this repository, you must be a collaborator"
+## AutoRP – automatyzacja tworzenia gamemodu RP
 
-Jesli podczas proby wykonania `git push` lub zatwierdzenia zmian w serwisie GitHub pojawia sie powyzszy komunikat, oznacza to, ze uzywane konto lub token dostepowy nie ma prawa zapisu do repozytorium. Poniżej lista kroków, które zazwyczaj rozwiązuja problem:
+Repozytorium zawiera narzędzie **AutoRP**, które potrafi wygenerować kompletny pakiet
+gamemodu RolePlay dla SA-MP – od pliku Pawn, przez konfigurację serwera, aż po szkielety
+automatycznych testów z wykorzystaniem botów sterujących klientem GTA:SA.
 
-1. **Zweryfikuj uprawnienia konta**
-   - Zaloguj sie w przegladarce na GitHub i przejdz do repozytorium.
-   - W zakladce **Settings → Collaborators** upewnij sie, ze Twoje konto widnieje na liscie z prawami `Write` lub `Admin`.
+### Najważniejsze funkcje
+- elastyczna konfiguracja w JSON-ie opisująca frakcje, punkty odrodzeń, pojazdy,
+  komendy i parametry świata;
+- generator Pawn tworzący gotowy do kompilacji gamemode z obsługą frakcji, komend,
+  pakietów startowych, ekonomii, ekwipunku oraz logów inicjalizacyjnych;
+- przygotowanie kompletnej paczki serwerowej (`server.cfg`, metadane) jednym poleceniem;
+- opcjonalna kompilacja do pliku AMX (wymagany `pawncc` w systemie);
+- orkiestrator testów zdolny do uruchamiania lokalnego serwera SA-MP i sterowania botami;
+- generowanie scenariuszy botów na podstawie konfiguracji (plików JSON) gotowych do
+  wykorzystania przez narzędzia QA.
 
-2. **Sprawdz adres zdalny (remote)**
+### Szybki start
+1. Przygotuj konfigurację (przykład w `configs/sample_config.json`).
+2. Wygeneruj paczkę serwerową:
    ```bash
-   git remote -v
+   python -m tools.autorp.cli configs/sample_config.json --package-dir build/server
    ```
-   Jezeli adres wskazuje na cudze repozytorium (np. `github.com/inne-konto/projekt.git`), sklonuj wlasny fork albo zmien adres poleceniem:
+   W katalogu `build/server` znajdziesz m.in. `gamemodes/AutoRP.pwn`, `server.cfg` i plik
+   `autorppackage.json` z metadanymi.
+3. (Opcjonalnie) skompiluj gamemode od razu po wygenerowaniu:
    ```bash
-   git remote set-url origin git@github.com:twoje-konto/projekt.git
+   python -m tools.autorp.cli configs/sample_config.json --package-dir build/server --compile
    ```
+   Domyślnie narzędzie doda katalog `inc/` jako ścieżkę include dla kompilatora Pawn.
 
-3. **Uzyj poprawnego sposobu uwierzytelnienia**
-   - Dla HTTPS wymagany jest **Personal Access Token** zamiast hasla.
-   - Dla SSH upewnij sie, ze klucz publiczny znajduje sie na Twoim koncie GitHub i agent SSH jest uruchomiony (`ssh-add -l`).
-
-4. **Zaktualizuj lokalne dane autora**
+4. (Opcjonalnie) wyeksportuj scenariusze botów z konfiguracji do katalogu:
    ```bash
-   git config user.name "Twoje Imie"
-   git config user.email "twoj.mail@example.com"
+   python -m tools.autorp.cli configs/sample_config.json --bot-scripts-dir build/bots
    ```
-   Niepoprawne dane autora nie blokują zapisu, ale ich uzupełnienie eliminuje błędy podczas commitów.
+   Każdy scenariusz opisany w sekcji `bot_scenarios` konfiguracji zostanie zapisany jako osobny
+   plik JSON zawierający sekwencję kroków do odpalenia w orchestratorze testów.
 
-5. **Spróbuj ponownie wypchnac zmiany**
-   ```bash
-   git push origin <twoja-galaz>
-   ```
-   Jezeli mimo wszystko pojawia sie komunikat o braku uprawnien, sprawdz czy nie probujesz nadpisac historii (`--force`) w repozytorium, do ktorego masz tylko dostep do odczytu.
+### Automatyczne testy botów
+Moduł `tools.autorp.tester` udostępnia klasę `TestOrchestrator`, która potrafi uruchomić
+lokalny serwer SA-MP (klasa `SampServerController`), zapisać scenariusze botów na dysk i
+wykonać je na zadanych klientach (implementujących interfejs `BotClient`). Dzięki temu
+można łatwo zintegrować scenariusze e2e z pipeline CI/CD.
 
-Po wykonaniu powyzszych krokow problem powinien zniknac. W razie dalszych trudnosci warto usunac lokalny katalog i ponownie sklonowac repozytorium korzystajac z wlasnych danych uwierzytelniajacych.
+### Testy
+```bash
+pytest
+```
