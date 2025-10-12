@@ -257,6 +257,8 @@
         {"type": "wait", "seconds": 0.3},
         {"type": "mouse_move", "x": 640, "y": 480, "duration": 0.15},
         {"type": "mouse_click", "button": "left"},
+        {"type": "key_sequence", "keys": ["f8", "enter"], "interval": 0.2},
+        {"type": "mouse_scroll", "direction": "down", "steps": 3},
         {"type": "screenshot", "name": "client_focus", "path": "Test/screenshots/client_focus.png"}
       ]
     }
@@ -308,9 +310,11 @@
         "expect_server_logs": ["Player connected"],
         "log_timeout": 5.0,
         "iterations": 1,
+        "wait_before": 0.2,
         "expect_client_logs": [
           {"client": "dummy_suite", "phrase": "Dzień dobry"}
-        ]
+        ],
+        "record_playback_dir": "Test/playback/patrol"
       },
       {
         "scenario": "heist_briefing",
@@ -321,7 +325,8 @@
         "wait_after": 1.0,
         "expect_client_logs": [
           {"client": "wine_suite", "phrase": "Zespół drugi"}
-        ]
+        ],
+        "record_playback_dir": "Test/playback/heist"
       },
       {
         "scenario": "client_focus_demo",
@@ -331,7 +336,8 @@
         "iterations": 1,
         "expect_client_logs": [
           {"client": "wine_suite", "phrase": "qa_bot", "log": "playback", "timeout": 3.0}
-        ]
+        ],
+        "record_playback_dir": "Test/playback/window"
       }
     ]
   },

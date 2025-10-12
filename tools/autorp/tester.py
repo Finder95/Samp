@@ -125,6 +125,21 @@ class PlaybackLog:
             payloads.extend(event.command_payloads)
         return payloads
 
+    def to_json(self) -> str:
+        return json.dumps(
+            {
+                "script_description": self.script_description,
+                "events": [
+                    {
+                        "timestamp": event.timestamp,
+                        "action": event.action.serialise(),
+                        "payloads": list(event.command_payloads),
+                    }
+                    for event in self.events
+                ],
+            }
+        )
+
 
 @dataclass(slots=True)
 class LogExpectationResult:
@@ -161,6 +176,8 @@ class ClientRunResult:
 
     client_name: str
     log: PlaybackLog | None
+    playback_log_path: Path | None = None
+    screenshots: tuple[Path, ...] = ()
 
 
 @dataclass(slots=True)
@@ -190,6 +207,8 @@ class BotRunContext:
     iterations: int = 1
     wait_after: float = 0.0
     client_log_expectations: tuple[ClientLogExpectation, ...] = ()
+    wait_before: float = 0.0
+    record_playback_dir: Path | None = None
 
 
 class SampServerController:
@@ -318,15 +337,36 @@ class TestOrchestrator:
         server_address: str,
         script: BotScript,
         selected_clients: Sequence[BotClient],
+        record_dir: Path | None = None,
     ) -> list[ClientRunResult]:
         results: list[ClientRunResult] = []
+        playback_target: Path | None = record_dir
+        if playback_target is not None:
+            playback_target.mkdir(parents=True, exist_ok=True)
         for client in selected_clients:
             client.connect(server_address)
             try:
                 log = client.execute_script(script)
             finally:
                 client.disconnect()
-            results.append(ClientRunResult(client_name=client.name, log=log))
+            playback_path: Path | None = None
+            if playback_target is not None and log is not None:
+                filename = (
+                    f"{script.description.replace(' ', '_')}_{client.name}.json"
+                    if script.description
+                    else f"script_{client.name}.json"
+                )
+                playback_path = playback_target / filename
+                playback_path.write_text(log.to_json(), encoding="utf-8")
+            screenshots = tuple(getattr(client, "captured_screenshots", ()) or ())
+            results.append(
+                ClientRunResult(
+                    client_name=client.name,
+                    log=log,
+                    playback_log_path=playback_path,
+                    screenshots=screenshots,
+                )
+            )
         return results
 
     def _evaluate_expectations(
@@ -406,6 +446,7 @@ class TestOrchestrator:
         expect_server_logs: Sequence[str] | None = None,
         log_timeout: float = 15.0,
         client_log_expectations: Sequence[ClientLogExpectation] | None = None,
+        record_playback_dir: Path | None = None,
     ) -> TestRunResult:
         """Run the script across all configured clients."""
 
@@ -414,7 +455,9 @@ class TestOrchestrator:
         client_monitor_lookup = self._collect_client_monitors(selected_clients)
         client_expectations = tuple(client_log_expectations or ())
         if server_address:
-            results = self._run_on_clients(server_address, script, selected_clients)
+            results = self._run_on_clients(
+                server_address, script, selected_clients, record_dir=record_playback_dir
+            )
             log_expectations = self._evaluate_expectations(expectations, log_timeout, None)
             client_log_results = self._evaluate_client_expectations(
                 client_expectations, log_timeout, client_monitor_lookup
@@ -432,7 +475,12 @@ class TestOrchestrator:
         with self.server_controller.running() as controller:
             monitor = controller.log_monitor
             monitor.mark()
-            results = self._run_on_clients(controller.server_address, script, selected_clients)
+            results = self._run_on_clients(
+                controller.server_address,
+                script,
+                selected_clients,
+                record_dir=record_playback_dir,
+            )
             log_expectations = self._evaluate_expectations(expectations, log_timeout, monitor)
             client_log_results = self._evaluate_client_expectations(
                 client_expectations, log_timeout, client_monitor_lookup
@@ -454,6 +502,8 @@ class TestOrchestrator:
         results: list[TestRunResult] = []
         for run in runs:
             for iteration in range(max(1, run.iterations)):
+                if run.wait_before > 0 and iteration == 0:
+                    time.sleep(run.wait_before)
                 result = self.run(
                     run.script,
                     server_address=server_address,
@@ -461,6 +511,7 @@ class TestOrchestrator:
                     expect_server_logs=run.expect_server_logs,
                     log_timeout=run.log_timeout,
                     client_log_expectations=run.client_log_expectations,
+                    record_playback_dir=run.record_playback_dir,
                 )
                 results.append(result)
                 if run.wait_after > 0 and iteration + 1 < run.iterations:

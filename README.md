@@ -105,20 +105,25 @@ Moduł `tools.autorp.bots` zawiera gotowe implementacje klientów:
 - `FileCommandTransport`, `BufferedCommandTransport` oraz `ScriptRunner` – pozwalają tworzyć
   własne integracje z makrami lub CLEO, tłumacząc akcje scenariuszy (`wait`, `chat`,
   `teleport`, `keypress`, `macro`, `wait_for`, `focus_window`, `type_text`, `mouse_move`,
-  `mouse_click`, `screenshot`, `config`, komendy tekstowe) na rzeczywiste instrukcje.
+  `mouse_click`, `mouse_scroll`, `key_sequence`, `screenshot`, `config`, komendy tekstowe)
+  na rzeczywiste instrukcje.
 
 `WineWindowInteractor` zapewnia owijarkę na `xdotool`, co pozwala na aktywację okna Wine,
-symulowanie wpisywania tekstu i ruchów myszy w trakcie wykonywania scenariuszy. Klient może
-automatycznie zrealizować sekwencje przygotowawcze (`setup_actions`) i porządkowe
-(`teardown_actions`) jeszcze przed wykonaniem właściwego scenariusza.
+symulowanie wpisywania tekstu, pojedynczych zdarzeń klawiszowych (`key`, `key_event`) oraz
+ruchów i przewijania myszy w trakcie wykonywania scenariuszy. Klient może automatycznie
+zrealizować sekwencje przygotowawcze (`setup_actions`) i porządkowe (`teardown_actions`)
+jeszcze przed wykonaniem właściwego scenariusza, a każda akcja `screenshot` rejestruje plik do
+raportu z przebiegu.
 
-Każdy przebieg scenariusza zwraca `PlaybackLog` z wysłanymi akcjami i znacznikami czasu,
-natomiast rezultat `TestRunResult` zawiera listę klientów, którzy ukończyli test oraz status
-dopasowania oczekiwań z logów serwera i logów klienckich.
+Każdy przebieg scenariusza zwraca `PlaybackLog` z wysłanymi akcjami i znacznikami czasu.
+Rezultat `TestRunResult` zawiera listę klientów, którzy ukończyli test, status dopasowania
+oczekiwań z logów serwera i logów klienckich oraz – jeśli włączono rejestrowanie – ścieżki do
+zapisanych logów odtworzenia i zebranych zrzutów ekranu.
 
 CLI udostępnia dodatkowe przełączniki wspierające pełną automatyzację (`--xdotool-binary`,
-`--bot-focus-window`, `--bot-window-title`), które można łączyć z definicjami klientów z
-konfiguracji (`logs`, `chatlog`, `setup_actions`, `teardown_actions`, `expect_client_logs`).
+`--bot-focus-window`, `--bot-window-title`, `--bot-record-playback-dir`), które można łączyć z
+definicjami klientów z konfiguracji (`logs`, `chatlog`, `setup_actions`, `teardown_actions`,
+`expect_client_logs`, `record_playback_dir`, `wait_before`, `wait_after`).
 
 ### Testy
 ```bash

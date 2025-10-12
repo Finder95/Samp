@@ -1714,6 +1714,8 @@ class BotRunDefinition:
     iterations: int = 1
     wait_after: float = 0.0
     expect_client_logs: tuple["BotClientLogExpectationDefinition", ...] = ()
+    wait_before: float = 0.0
+    record_playback_dir: str | None = None
 
     @classmethod
     def from_dict(cls, data: dict) -> "BotRunDefinition":
@@ -1734,6 +1736,12 @@ class BotRunDefinition:
             iterations=int(data.get("iterations", 1)),
             wait_after=float(data.get("wait_after", 0.0)),
             expect_client_logs=client_log_expectations,
+            wait_before=float(data.get("wait_before", 0.0)),
+            record_playback_dir=(
+                str(data.get("record_playback_dir"))
+                if data.get("record_playback_dir") is not None
+                else None
+            ),
         )
 
 
@@ -1763,6 +1771,12 @@ class BotAutomationPlan:
                     client_log_expectations=tuple(
                         expectation.to_expectation()
                         for expectation in run.expect_client_logs
+                    ),
+                    wait_before=run.wait_before,
+                    record_playback_dir=(
+                        Path(run.record_playback_dir)
+                        if run.record_playback_dir is not None
+                        else None
                     ),
                 )
             )

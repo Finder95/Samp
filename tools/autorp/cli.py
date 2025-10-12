@@ -101,6 +101,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         help="Nie uruchamiaj rzeczywistego klienta SA-MP, tylko zapisuj komendy do pliku",
     )
+    parser.add_argument(
+        "--bot-record-playback-dir",
+        type=Path,
+        default=None,
+        help="Jeśli ustawiono, zapisuje logi odtworzenia botów w katalogu",
+    )
     return parser.parse_args(argv)
 
 
@@ -271,6 +277,24 @@ def main(argv: list[str] | None = None) -> Path:
                 contexts = plan_contexts
             else:
                 contexts = [BotRunContext(script=script) for script in scripts]
+            record_root_arg = args.bot_record_playback_dir
+            package_root = package_dir
+            for context in contexts:
+                if (
+                    context.record_playback_dir is not None
+                    and not context.record_playback_dir.is_absolute()
+                ):
+                    context.record_playback_dir = package_root / context.record_playback_dir
+            if record_root_arg is not None:
+                resolved_root = (
+                    record_root_arg
+                    if record_root_arg.is_absolute()
+                    else package_root / record_root_arg
+                )
+                resolved_root.mkdir(parents=True, exist_ok=True)
+                for context in contexts:
+                    if context.record_playback_dir is None:
+                        context.record_playback_dir = resolved_root
             registered: dict[str, Path] = {}
             for context in contexts:
                 desc = context.script.description or "scenario"
@@ -291,6 +315,13 @@ def main(argv: list[str] | None = None) -> Path:
                         print(
                             f" - {client_result.client_name}: wysłano {len(payloads)} komend ({', '.join(payloads)})"
                         )
+                        if client_result.playback_log_path is not None:
+                            print(
+                                f"   zapis odtworzenia: {client_result.playback_log_path}"
+                            )
+                        if client_result.screenshots:
+                            joined = ", ".join(str(path) for path in client_result.screenshots)
+                            print(f"   zrzuty ekranu: {joined}")
                 if result.log_expectations:
                     for expectation in result.log_expectations:
                         status = "OK" if expectation.matched else "NIE ZNALEZIONO"

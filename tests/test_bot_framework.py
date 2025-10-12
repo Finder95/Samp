@@ -5,6 +5,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from pathlib import Path
+
 from tools.autorp.bots import (
     BufferedCommandTransport,
     DummyBotClient,
@@ -75,6 +77,8 @@ def test_action_translator_supports_extended_actions():
             {"type": "mouse_click", "button": "left", "state": "double"},
             {"type": "screenshot", "name": "after_login"},
             {"type": "config", "name": "sensitivity", "value": 0.5},
+            {"type": "key_sequence", "keys": ["f", "enter"], "interval": 0.1},
+            {"type": "mouse_scroll", "direction": "up", "steps": 2},
         ),
     )
     log = runner.run(script)
@@ -90,8 +94,14 @@ def test_action_translator_supports_extended_actions():
         "MOUSECLICK:left:double",
         "SCREENSHOT:after_login",
         "CONFIG:sensitivity=0.5",
+        "KEY:F:down",
+        "KEY:F:up",
+        "WAIT:0.1",
+        "KEY:ENTER:down",
+        "KEY:ENTER:up",
+        "MOUSESCROLL:up:2:0",
     ]
-    assert len(log.events) == 9
+    assert len(log.events) == 11
 
 
 def test_orchestrator_returns_logs(tmp_path):
@@ -127,9 +137,19 @@ def test_wine_window_interactor_records_commands():
     interactor.type_text("Hello")
     interactor.mouse_move(50, 60, duration=0.2)
     interactor.mouse_click("left", "double")
+    interactor.mouse_scroll("up", steps=3)
+    interactor.key_event("enter")
+    interactor.key_event("lshift", "down")
+    interactor.key_event("lshift", "up")
     assert interactor.executed_commands[0] == ["xdotool", "search", "--name", "Test"]
     assert interactor.executed_commands[1][1] == "windowactivate"
     assert any(command[1] == "type" for command in interactor.executed_commands if len(command) > 1)
+    assert any("click" in command for command in interactor.executed_commands[-4:])
+    assert any(
+        cmd[1] in {"keydown", "keyup", "key"}
+        for cmd in interactor.executed_commands
+        if len(cmd) > 1
+    )
 
 
 def test_wine_client_window_interactions(tmp_path):
@@ -154,6 +174,8 @@ def test_wine_client_window_interactions(tmp_path):
             {"type": "mouse_move", "x": 10, "y": 20},
             {"type": "mouse_click", "button": "left", "state": "double"},
             {"type": "screenshot", "name": "after", "path": "captures/after.png"},
+            {"type": "key_sequence", "keys": ["enter"]},
+            {"type": "mouse_scroll", "direction": "down", "steps": 1},
         ),
     )
     client.execute_script(script)
@@ -161,6 +183,7 @@ def test_wine_client_window_interactions(tmp_path):
     commands = client.window_interactor.executed_commands
     assert any("Custom" in " ".join(cmd) for cmd in commands)
     assert any(cmd[1] == "type" for cmd in commands if len(cmd) > 1)
+    assert any(cmd[1] in {"click", "keydown"} for cmd in commands if len(cmd) > 1)
     screenshots = client.captured_screenshots
     assert screenshots and screenshots[0].name == "after.png"
     monitors = client.client_log_monitors()
@@ -208,6 +231,32 @@ def test_orchestrator_client_log_expectations(tmp_path):
     assert result.client_log_expectations[0].matched is True
 
 
+def test_orchestrator_records_playback_and_screenshots(tmp_path):
+    shot_path = tmp_path / "shot.png"
+
+    class RecordingClient(DummyBotClient):
+        def execute_script(self, script: BotScript):  # type: ignore[override]
+            log = super().execute_script(script)
+            self.captured_screenshots = [shot_path]
+            return log
+
+    transport = BufferedCommandTransport()
+    client = RecordingClient(name="recording", transport=transport)
+    orchestrator = TestOrchestrator(clients=[client])
+    script = BotScript(description="Record Demo", commands=("/action",))
+    record_dir = tmp_path / "playback"
+    result = orchestrator.run(
+        script,
+        server_address="127.0.0.1:7777",
+        record_playback_dir=record_dir,
+    )
+    assert record_dir.exists()
+    client_result = result.client_results[0]
+    assert client_result.playback_log_path is not None
+    assert client_result.playback_log_path.exists()
+    assert client_result.screenshots == (shot_path,)
+
+
 def test_config_bot_plan_contexts():
     data = {
         "name": "Demo",
@@ -236,6 +285,8 @@ def test_config_bot_plan_contexts():
                     "clients": ["dummy"],
                     "iterations": 2,
                     "expect_client_logs": [{"client": "dummy", "phrase": "ready"}],
+                    "wait_before": 0.25,
+                    "record_playback_dir": "artifacts/playback",
                 }
             ],
         },
@@ -249,3 +300,5 @@ def test_config_bot_plan_contexts():
     assert contexts[0].client_names == ("dummy",)
     assert contexts[0].iterations == 2
     assert contexts[0].client_log_expectations[0].phrase == "ready"
+    assert contexts[0].wait_before == 0.25
+    assert contexts[0].record_playback_dir == Path("artifacts/playback")

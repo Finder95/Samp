@@ -128,6 +128,25 @@ class WineWindowInteractor:
         else:
             self._invoke("click", target)
 
+    def mouse_scroll(self, direction: str, steps: int = 1, horizontal: bool = False) -> None:
+        if steps <= 0:
+            return
+        normalized = direction.lower()
+        if horizontal:
+            button = "6" if normalized in {"down", "right"} else "7"
+        else:
+            button = "5" if normalized in {"down", "right"} else "4"
+        self._invoke("click", "--repeat", str(int(steps)), button)
+
+    def key_event(self, key: str, state: str = "press") -> None:
+        normalized = key.upper()
+        if state == "down":
+            self._invoke("keydown", normalized)
+        elif state == "up":
+            self._invoke("keyup", normalized)
+        else:
+            self._invoke("key", normalized)
+
 @dataclass(slots=True)
 class ActionTranslator:
     """Translate high-level script actions into client-understood payloads."""
@@ -145,6 +164,7 @@ class ActionTranslator:
     mouse_click_token: str = "MOUSECLICK"
     screenshot_token: str = "SCREENSHOT"
     config_token: str = "CONFIG"
+    mouse_scroll_token: str = "MOUSESCROLL"
 
     def translate(self, action: ScriptAction) -> tuple[str, ...]:
         if action.type == "chat" and action.message is not None:
@@ -214,12 +234,32 @@ class ActionTranslator:
             button = str(action.payload.get("button", "left"))
             action_mode = str(action.payload.get("state", action.payload.get("mode", "click")))
             return (f"{self.mouse_click_token}:{button}:{action_mode}",)
+        if action.type in {"mouse_scroll", "scroll"}:
+            direction = str(action.payload.get("direction", "down"))
+            steps = int(action.payload.get("steps", action.payload.get("amount", 1)))
+            horizontal = bool(action.payload.get("horizontal", False))
+            return (
+                f"{self.mouse_scroll_token}:{direction}:{steps}:{int(horizontal)}",
+            )
         if action.type == "screenshot":
             name = str(action.payload.get("name", "capture"))
             target = action.payload.get("path") or action.payload.get("directory")
             if target:
                 return (f"{self.screenshot_token}:{name}:{target}",)
             return (f"{self.screenshot_token}:{name}",)
+        if action.type in {"key_sequence", "keys"}:
+            sequence = action.payload.get("keys")
+            if not isinstance(sequence, (list, tuple)) or not sequence:
+                raise ValueError("Sekwencja klawiszy wymaga listy 'keys'")
+            interval = float(action.payload.get("interval", 0.0))
+            payloads: list[str] = []
+            for index, raw_key in enumerate(sequence):
+                key = str(raw_key).upper()
+                payloads.append(f"{self.key_token}:{key}:down")
+                payloads.append(f"{self.key_token}:{key}:up")
+                if interval > 0 and index + 1 < len(sequence):
+                    payloads.append(f"{self.wait_token}:{interval}")
+            return tuple(payloads)
         if action.type == "config":
             name = str(action.payload.get("name", action.payload.get("key", "")))
             if not name:
@@ -337,6 +377,7 @@ class WineSampClient(BotClient):
                     raise
 
     def execute_script(self, script: BotScript) -> PlaybackLog:
+        self.captured_screenshots.clear()
         if self.setup_actions:
             self._runner.run(self._setup_script)
         log = self._runner.run(script)
@@ -400,6 +441,13 @@ class WineSampClient(BotClient):
             elif payload.startswith(f"{self.translator.mouse_click_token}:"):
                 _, button, state = payload.split(":", 2)
                 self.window_interactor.mouse_click(button, state)
+            elif payload.startswith(f"{self.translator.mouse_scroll_token}:"):
+                _, direction, steps, horizontal = payload.split(":", 3)
+                self.window_interactor.mouse_scroll(
+                    direction,
+                    int(float(steps)),
+                    horizontal=bool(int(horizontal)),
+                )
             elif payload.startswith(f"{self.translator.screenshot_token}:"):
                 parts = payload.split(":", 2)
                 name = parts[1] if len(parts) > 1 else "capture"
@@ -408,6 +456,9 @@ class WineSampClient(BotClient):
                 if not path.is_absolute():
                     path = self.gta_directory / path
                 self.captured_screenshots.append(path)
+            elif payload.startswith(f"{self.translator.key_token}:"):
+                _, key, state = payload.split(":", 2)
+                self.window_interactor.key_event(key, state)
 
 
 @dataclass(slots=True)
@@ -421,6 +472,7 @@ class DummyBotClient(BotClient):
     executed_logs: list[PlaybackLog] = field(default_factory=list)
     connect_delay: float = 0.0
     log_monitors: tuple[ClientLogMonitor, ...] = ()
+    captured_screenshots: list[Path] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         if self.runner is None:
@@ -434,6 +486,7 @@ class DummyBotClient(BotClient):
     def execute_script(self, script: BotScript) -> PlaybackLog:
         log = self.runner.run(script)
         self.executed_logs.append(log)
+        self.captured_screenshots.clear()
         return log
 
     def disconnect(self) -> None:  # pragma: no cover - trivial
