@@ -247,6 +247,18 @@
         {"type": "wait", "seconds": 1},
         {"type": "chat", "message": "Zespół drugi, potwierdź gotowość."}
       ]
+    },
+    {
+      "name": "client_focus_demo",
+      "description": "Przykład interakcji z oknem klienta SA-MP",
+      "steps": [
+        {"type": "focus_window", "title": "San Andreas Multiplayer"},
+        {"type": "type_text", "text": "qa_bot"},
+        {"type": "wait", "seconds": 0.3},
+        {"type": "mouse_move", "x": 640, "y": 480, "duration": 0.15},
+        {"type": "mouse_click", "button": "left"},
+        {"type": "screenshot", "name": "client_focus", "path": "Test/screenshots/client_focus.png"}
+      ]
     }
   ],
   "bot_automation": {
@@ -256,7 +268,13 @@
         "type": "dummy",
         "command_file": "Test/patrol_suite.log",
         "command_separator": "\n",
-        "connect_delay": 0.1
+        "connect_delay": 0.1,
+        "logs": [
+          {"name": "dummy_chat", "path": "Test/logs/dummy_chat.log"}
+        ],
+        "setup_actions": [
+          {"type": "wait", "seconds": 0.25}
+        ]
       },
       {
         "name": "wine_suite",
@@ -267,6 +285,19 @@
         "dry_run": true,
         "command_file": "Test/wine_suite_commands.txt",
         "reset_commands_on_connect": true,
+        "focus_window": true,
+        "xdotool_binary": "xdotool",
+        "chatlog": "Test/gta_stub/SAMP/chatlog.txt",
+        "logs": [
+          {"name": "playback", "path": "Test/gta_stub/logs/playback.log"}
+        ],
+        "setup_actions": [
+          {"type": "focus_window"},
+          {"type": "type_text", "text": "autorptest"}
+        ],
+        "teardown_actions": [
+          {"type": "screenshot", "name": "suite_teardown"}
+        ],
         "environment": {"WINEDEBUG": "-all"}
       }
     ],
@@ -276,7 +307,10 @@
         "clients": ["dummy_suite"],
         "expect_server_logs": ["Player connected"],
         "log_timeout": 5.0,
-        "iterations": 1
+        "iterations": 1,
+        "expect_client_logs": [
+          {"client": "dummy_suite", "phrase": "Dzień dobry"}
+        ]
       },
       {
         "scenario": "heist_briefing",
@@ -284,7 +318,20 @@
         "expect_server_logs": ["[AutoRP]"],
         "log_timeout": 10.0,
         "iterations": 2,
-        "wait_after": 1.0
+        "wait_after": 1.0,
+        "expect_client_logs": [
+          {"client": "wine_suite", "phrase": "Zespół drugi"}
+        ]
+      },
+      {
+        "scenario": "client_focus_demo",
+        "clients": ["wine_suite"],
+        "expect_server_logs": ["client focus"],
+        "log_timeout": 8.0,
+        "iterations": 1,
+        "expect_client_logs": [
+          {"client": "wine_suite", "phrase": "qa_bot", "log": "playback", "timeout": 3.0}
+        ]
       }
     ]
   },

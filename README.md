@@ -85,8 +85,9 @@ Moduł `tools.autorp.tester` udostępnia klasę `TestOrchestrator`, która potra
 lokalny serwer SA-MP (klasa `SampServerController`), zapisać scenariusze botów na dysk i
 wykonać je na zdefiniowanych klientach (implementujących interfejs `BotClient`). Orkiestrator
 obsługuje wiele klientów jednocześnie, śledzi oczekiwane wpisy w `server_log.txt` (przez
-`ServerLogMonitor`) i umożliwia budowanie planów testowych (`BotRunContext`) z powtórzeniami,
-opóźnieniami i asercjami na logi.
+`ServerLogMonitor`) oraz w logach samych klientów (przez `ClientLogMonitor`) i umożliwia
+budowanie planów testowych (`BotRunContext`) z powtórzeniami, opóźnieniami oraz asercjami na
+logi serwera i logi klienckie.
 
 Konfiguracja JSON może zawierać blok `bot_automation`, w którym definiujemy listę klientów
 (`clients`) oraz przebiegów (`runs`). Każdy przebieg wskazuje scenariusz z sekcji
@@ -97,16 +98,27 @@ liczbę iteracji i odstępów między nimi. Przykładowa konfiguracja znajduje s
 Moduł `tools.autorp.bots` zawiera gotowe implementacje klientów:
 
 - `WineSampClient` – uruchamia prawdziwego klienta SA-MP przez Wine (z obsługą dry-run,
-  czyszczenia pliku komend i konfigurowanego opóźnienia po połączeniu);
+  czyszczenia pliku komend, konfigurowanego opóźnienia po połączeniu, opcjonalnego fokusu
+  okna przez `WineWindowInteractor` oraz zrzutów ekranu po zakończeniu przebiegu);
 - `DummyBotClient` – lekka implementacja do testów jednostkowych lub środowisk CI, która
   zapisuje sekwencje komend bez uruchamiania GTA:SA;
 - `FileCommandTransport`, `BufferedCommandTransport` oraz `ScriptRunner` – pozwalają tworzyć
   własne integracje z makrami lub CLEO, tłumacząc akcje scenariuszy (`wait`, `chat`,
-  `teleport`, `keypress`, `macro`, `wait_for`, komendy tekstowe) na rzeczywiste instrukcje.
+  `teleport`, `keypress`, `macro`, `wait_for`, `focus_window`, `type_text`, `mouse_move`,
+  `mouse_click`, `screenshot`, `config`, komendy tekstowe) na rzeczywiste instrukcje.
+
+`WineWindowInteractor` zapewnia owijarkę na `xdotool`, co pozwala na aktywację okna Wine,
+symulowanie wpisywania tekstu i ruchów myszy w trakcie wykonywania scenariuszy. Klient może
+automatycznie zrealizować sekwencje przygotowawcze (`setup_actions`) i porządkowe
+(`teardown_actions`) jeszcze przed wykonaniem właściwego scenariusza.
 
 Każdy przebieg scenariusza zwraca `PlaybackLog` z wysłanymi akcjami i znacznikami czasu,
-natomiast rezultat `TestRunResult` zawiera listę klientów, którzy ukończyli test, oraz
-status dopasowania oczekiwań z logów serwera.
+natomiast rezultat `TestRunResult` zawiera listę klientów, którzy ukończyli test oraz status
+dopasowania oczekiwań z logów serwera i logów klienckich.
+
+CLI udostępnia dodatkowe przełączniki wspierające pełną automatyzację (`--xdotool-binary`,
+`--bot-focus-window`, `--bot-window-title`), które można łączyć z definicjami klientów z
+konfiguracji (`logs`, `chatlog`, `setup_actions`, `teardown_actions`, `expect_client_logs`).
 
 ### Testy
 ```bash

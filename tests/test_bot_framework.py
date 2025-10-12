@@ -11,9 +11,16 @@ from tools.autorp.bots import (
     FileCommandTransport,
     ScriptRunner,
     WineSampClient,
+    WineWindowInteractor,
 )
 from tools.autorp.config import GamemodeConfig
-from tools.autorp.tester import BotRunContext, BotScript, TestOrchestrator
+from tools.autorp.tester import (
+    BotRunContext,
+    BotScript,
+    ClientLogExpectation,
+    ClientLogMonitor,
+    TestOrchestrator,
+)
 
 
 def test_bot_script_iter_actions_prefers_actions():
@@ -62,6 +69,12 @@ def test_action_translator_supports_extended_actions():
             {"type": "keypress", "key": "f"},
             {"type": "macro", "commands": ["/one", "/two"]},
             {"type": "wait_for", "phrase": "Connected", "timeout": 3},
+            {"type": "focus_window"},
+            {"type": "type_text", "text": "login"},
+            {"type": "mouse_move", "x": 120, "y": 220, "duration": 0.1},
+            {"type": "mouse_click", "button": "left", "state": "double"},
+            {"type": "screenshot", "name": "after_login"},
+            {"type": "config", "name": "sensitivity", "value": 0.5},
         ),
     )
     log = runner.run(script)
@@ -71,8 +84,14 @@ def test_action_translator_supports_extended_actions():
         "/one",
         "/two",
         "WAITFOR:3.0:Connected",
+        "FOCUS",
+        "TYPE:login",
+        "MOUSE:absolute:120.0:220.0:0.1",
+        "MOUSECLICK:left:double",
+        "SCREENSHOT:after_login",
+        "CONFIG:sensitivity=0.5",
     ]
-    assert len(log.events) == 3
+    assert len(log.events) == 9
 
 
 def test_orchestrator_returns_logs(tmp_path):
@@ -99,6 +118,53 @@ def test_wine_client_dry_run(tmp_path):
     log = client.execute_script(script)
     assert log.commands_sent() == ["/start"]
     assert client.command_file.exists()
+    assert client.client_log_monitors()
+
+
+def test_wine_window_interactor_records_commands():
+    interactor = WineWindowInteractor(window_title="Test", dry_run=True, dry_run_window_id="0xabc")
+    interactor.focus()
+    interactor.type_text("Hello")
+    interactor.mouse_move(50, 60, duration=0.2)
+    interactor.mouse_click("left", "double")
+    assert interactor.executed_commands[0] == ["xdotool", "search", "--name", "Test"]
+    assert interactor.executed_commands[1][1] == "windowactivate"
+    assert any(command[1] == "type" for command in interactor.executed_commands if len(command) > 1)
+
+
+def test_wine_client_window_interactions(tmp_path):
+    gta_dir = tmp_path / "gta"
+    chat_dir = gta_dir / "SAMP"
+    chat_dir.mkdir(parents=True)
+    client = WineSampClient(
+        name="wine-extended",
+        gta_directory=gta_dir,
+        dry_run=True,
+        focus_window=True,
+        log_files=(("custom", tmp_path / "custom.log", "utf-8"),),
+        setup_actions=({"type": "wait", "seconds": 0.1},),
+        teardown_actions=({"type": "wait", "seconds": 0.2},),
+    )
+    client.connect("127.0.0.1:7777")
+    script = BotScript(
+        description="WindowActions",
+        actions=(
+            {"type": "focus_window", "title": "Custom"},
+            {"type": "type_text", "text": "hello"},
+            {"type": "mouse_move", "x": 10, "y": 20},
+            {"type": "mouse_click", "button": "left", "state": "double"},
+            {"type": "screenshot", "name": "after", "path": "captures/after.png"},
+        ),
+    )
+    client.execute_script(script)
+    assert client.window_interactor is not None
+    commands = client.window_interactor.executed_commands
+    assert any("Custom" in " ".join(cmd) for cmd in commands)
+    assert any(cmd[1] == "type" for cmd in commands if len(cmd) > 1)
+    screenshots = client.captured_screenshots
+    assert screenshots and screenshots[0].name == "after.png"
+    monitors = client.client_log_monitors()
+    assert sorted(monitor.name for monitor in monitors) == ["chatlog", "custom"]
 
 
 def test_run_suite_filters_clients(tmp_path):
@@ -116,6 +182,32 @@ def test_run_suite_filters_clients(tmp_path):
     assert transport_b.buffer == ["/onlybeta"]
 
 
+def test_orchestrator_client_log_expectations(tmp_path):
+    log_path = tmp_path / "chatlog.txt"
+    log_path.write_text("", encoding="utf-8")
+
+    class WritingClient(DummyBotClient):
+        def execute_script(self, script: BotScript):  # type: ignore[override]
+            result = super().execute_script(script)
+            log_path.write_text(log_path.read_text(encoding="utf-8") + "Connected\n", encoding="utf-8")
+            return result
+
+    monitor = ClientLogMonitor(client_name="dummy", name="chatlog", log_path=log_path)
+    transport = BufferedCommandTransport()
+    client = WritingClient(name="dummy", transport=transport, log_monitors=(monitor,))
+    orchestrator = TestOrchestrator(clients=[client])
+    script = BotScript(description="Logs", commands=("/wave",))
+    expectation = ClientLogExpectation(client_name="dummy", phrase="Connected", log_name="chatlog", timeout=0.5, poll_interval=0.05)
+    result = orchestrator.run(
+        script,
+        server_address="127.0.0.1:7777",
+        client_names=("dummy",),
+        client_log_expectations=(expectation,),
+    )
+    assert result.client_log_expectations
+    assert result.client_log_expectations[0].matched is True
+
+
 def test_config_bot_plan_contexts():
     data = {
         "name": "Demo",
@@ -129,12 +221,21 @@ def test_config_bot_plan_contexts():
             }
         ],
         "bot_automation": {
-            "clients": [{"name": "dummy", "type": "dummy"}],
+            "clients": [
+                {
+                    "name": "dummy",
+                    "type": "dummy",
+                    "logs": [{"name": "custom", "path": "logs/custom.log"}],
+                    "setup_actions": [{"type": "wait", "seconds": 0.5}],
+                    "focus_window": True,
+                }
+            ],
             "runs": [
                 {
                     "scenario": "simple",
                     "clients": ["dummy"],
                     "iterations": 2,
+                    "expect_client_logs": [{"client": "dummy", "phrase": "ready"}],
                 }
             ],
         },
@@ -142,7 +243,9 @@ def test_config_bot_plan_contexts():
     config = GamemodeConfig.from_dict(data)
     plan = config.bot_automation_plan()
     assert plan is not None
+    assert plan.clients[0].logs[0].name == "custom"
     contexts = plan.contexts(config.scenarios)
     assert len(contexts) == 1
     assert contexts[0].client_names == ("dummy",)
     assert contexts[0].iterations == 2
+    assert contexts[0].client_log_expectations[0].phrase == "ready"

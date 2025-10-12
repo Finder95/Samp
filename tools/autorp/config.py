@@ -8,7 +8,7 @@ from typing import Sequence
 
 from .pawn import escape_pawn_string, indent_lines, sanitize_identifier
 from .scenario import BotScenarioSpec
-from .tester import BotRunContext
+from .tester import BotRunContext, ClientLogExpectation
 
 
 def _parse_colour(value: int | str) -> int:
@@ -1591,6 +1591,23 @@ class BotScenarioDefinition:
 
 
 @dataclass(slots=True)
+class BotClientLogDefinition:
+    """Definition describing a client-side log file."""
+
+    name: str
+    path: str
+    encoding: str = "utf-8"
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "BotClientLogDefinition":
+        return cls(
+            name=str(data.get("name", "log")),
+            path=str(data.get("path")),
+            encoding=str(data.get("encoding", "utf-8")),
+        )
+
+
+@dataclass(slots=True)
 class BotClientDefinition:
     """Definition describing how to instantiate a bot client."""
 
@@ -1605,9 +1622,29 @@ class BotClientDefinition:
     connect_delay: float = 0.0
     reset_commands_on_connect: bool = True
     environment: dict[str, str] = field(default_factory=dict)
+    focus_window: bool = False
+    window_title: str | None = None
+    xdotool_binary: str | None = None
+    chatlog: str | None = None
+    chatlog_encoding: str | None = None
+    logs: tuple[BotClientLogDefinition, ...] = ()
+    setup_actions: tuple[dict[str, object], ...] = ()
+    teardown_actions: tuple[dict[str, object], ...] = ()
+    options: dict[str, object] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data: dict) -> "BotClientDefinition":
+        logs = tuple(
+            BotClientLogDefinition.from_dict(entry)
+            for entry in data.get("logs", [])
+            if entry
+        )
+        setup_actions = tuple(dict(action) for action in data.get("setup_actions", []))
+        if not setup_actions:
+            setup_actions = tuple(dict(action) for action in data.get("setup", []))
+        teardown_actions = tuple(dict(action) for action in data.get("teardown_actions", []))
+        if not teardown_actions:
+            teardown_actions = tuple(dict(action) for action in data.get("teardown", []))
         return cls(
             name=str(data.get("name")),
             type=str(data.get("type", "dummy")),
@@ -1620,6 +1657,49 @@ class BotClientDefinition:
             connect_delay=float(data.get("connect_delay", 0.0)),
             reset_commands_on_connect=bool(data.get("reset_commands_on_connect", True)),
             environment=dict(data.get("environment", {})),
+            focus_window=bool(data.get("focus_window", False)),
+            window_title=data.get("window_title"),
+            xdotool_binary=data.get("xdotool_binary"),
+            chatlog=data.get("chatlog"),
+            chatlog_encoding=data.get("chatlog_encoding"),
+            logs=logs,
+            setup_actions=setup_actions,
+            teardown_actions=teardown_actions,
+            options=dict(data.get("options", {})),
+        )
+
+
+@dataclass(slots=True)
+class BotClientLogExpectationDefinition:
+    """Expectation configuration for client-side log assertions."""
+
+    client: str
+    phrase: str
+    log: str = "chatlog"
+    timeout: float | None = None
+    poll_interval: float | None = None
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "BotClientLogExpectationDefinition":
+        return cls(
+            client=str(data.get("client", data.get("name"))),
+            phrase=str(data.get("phrase", data.get("text", ""))),
+            log=str(data.get("log", data.get("source", "chatlog"))),
+            timeout=(
+                float(data["timeout"]) if data.get("timeout") is not None else None
+            ),
+            poll_interval=(
+                float(data["poll_interval"]) if data.get("poll_interval") is not None else None
+            ),
+        )
+
+    def to_expectation(self) -> ClientLogExpectation:
+        return ClientLogExpectation(
+            client_name=self.client,
+            phrase=self.phrase,
+            log_name=self.log,
+            timeout=self.timeout,
+            poll_interval=self.poll_interval if self.poll_interval is not None else 0.5,
         )
 
 
@@ -1633,6 +1713,7 @@ class BotRunDefinition:
     log_timeout: float = 15.0
     iterations: int = 1
     wait_after: float = 0.0
+    expect_client_logs: tuple["BotClientLogExpectationDefinition", ...] = ()
 
     @classmethod
     def from_dict(cls, data: dict) -> "BotRunDefinition":
@@ -1641,6 +1722,10 @@ class BotRunDefinition:
             raise ValueError("Bot run definition wymaga pola 'scenario'")
         clients = tuple(str(name) for name in data.get("clients", []))
         expect = tuple(str(entry) for entry in data.get("expect_server_logs", []))
+        client_log_expectations = tuple(
+            BotClientLogExpectationDefinition.from_dict(entry)
+            for entry in data.get("expect_client_logs", [])
+        )
         return cls(
             scenario=str(scenario_name),
             clients=clients,
@@ -1648,6 +1733,7 @@ class BotRunDefinition:
             log_timeout=float(data.get("log_timeout", 15.0)),
             iterations=int(data.get("iterations", 1)),
             wait_after=float(data.get("wait_after", 0.0)),
+            expect_client_logs=client_log_expectations,
         )
 
 
@@ -1674,6 +1760,10 @@ class BotAutomationPlan:
                     log_timeout=run.log_timeout,
                     iterations=run.iterations,
                     wait_after=run.wait_after,
+                    client_log_expectations=tuple(
+                        expectation.to_expectation()
+                        for expectation in run.expect_client_logs
+                    ),
                 )
             )
         return contexts
@@ -3168,7 +3258,9 @@ __all__ = [
     "WeatherStage",
     "WeatherCycle",
     "BotScenarioDefinition",
+    "BotClientLogDefinition",
     "BotClientDefinition",
+    "BotClientLogExpectationDefinition",
     "BotRunDefinition",
     "BotAutomationPlan",
 ]

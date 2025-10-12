@@ -24,6 +24,9 @@ class BotClient(Protocol):
     def disconnect(self) -> None:
         """Disconnect the client from the server."""
 
+    def client_log_monitors(self) -> Sequence["ClientLogMonitor"] | None:
+        """Return monitors that can be used to assert client-side logs (optional)."""
+
 
 @dataclass(slots=True)
 class ScriptAction:
@@ -132,6 +135,27 @@ class LogExpectationResult:
 
 
 @dataclass(slots=True)
+class ClientLogExpectation:
+    """Expectation describing a phrase that should appear in a client side log."""
+
+    client_name: str
+    phrase: str
+    log_name: str = "chatlog"
+    timeout: float | None = None
+    poll_interval: float = 0.5
+
+
+@dataclass(slots=True)
+class ClientLogExpectationResult:
+    """Evaluation result for a client side log expectation."""
+
+    client_name: str
+    log_name: str
+    phrase: str
+    matched: bool
+
+
+@dataclass(slots=True)
 class ClientRunResult:
     """Result returned by the orchestrator for a single client."""
 
@@ -146,6 +170,7 @@ class TestRunResult:
     script: BotScript
     client_results: tuple[ClientRunResult, ...]
     log_expectations: tuple[LogExpectationResult, ...] = ()
+    client_log_expectations: tuple[ClientLogExpectationResult, ...] = ()
 
     def successful_clients(self) -> list[str]:
         return [result.client_name for result in self.client_results if result.log is not None]
@@ -164,6 +189,7 @@ class BotRunContext:
     log_timeout: float = 15.0
     iterations: int = 1
     wait_after: float = 0.0
+    client_log_expectations: tuple[ClientLogExpectation, ...] = ()
 
 
 class SampServerController:
@@ -319,6 +345,59 @@ class TestOrchestrator:
             results.append(LogExpectationResult(phrase=phrase, matched=matched))
         return tuple(results)
 
+    def _collect_client_monitors(
+        self, selected_clients: Sequence[BotClient]
+    ) -> dict[str, dict[str, "ClientLogMonitor"]]:
+        lookup: dict[str, dict[str, ClientLogMonitor]] = {}
+        for client in selected_clients:
+            monitors = client.client_log_monitors()
+            if not monitors:
+                continue
+            client_map: dict[str, ClientLogMonitor] = {}
+            for monitor in monitors:
+                monitor.mark()
+                client_map[monitor.name] = monitor
+            lookup[client.name] = client_map
+        return lookup
+
+    def _evaluate_client_expectations(
+        self,
+        expectations: Sequence[ClientLogExpectation],
+        default_timeout: float,
+        monitor_lookup: dict[str, dict[str, "ClientLogMonitor"]],
+    ) -> tuple[ClientLogExpectationResult, ...]:
+        if not expectations:
+            return ()
+        results: list[ClientLogExpectationResult] = []
+        for expectation in expectations:
+            client_monitors = monitor_lookup.get(expectation.client_name)
+            monitor = None if client_monitors is None else client_monitors.get(expectation.log_name)
+            timeout = expectation.timeout or default_timeout
+            if monitor is None:
+                results.append(
+                    ClientLogExpectationResult(
+                        client_name=expectation.client_name,
+                        log_name=expectation.log_name,
+                        phrase=expectation.phrase,
+                        matched=False,
+                    )
+                )
+                continue
+            matched = monitor.wait_for(
+                expectation.phrase,
+                timeout=timeout,
+                poll_interval=expectation.poll_interval,
+            )
+            results.append(
+                ClientLogExpectationResult(
+                    client_name=expectation.client_name,
+                    log_name=expectation.log_name,
+                    phrase=expectation.phrase,
+                    matched=matched,
+                )
+            )
+        return tuple(results)
+
     def run(
         self,
         script: BotScript,
@@ -326,18 +405,25 @@ class TestOrchestrator:
         client_names: Sequence[str] | None = None,
         expect_server_logs: Sequence[str] | None = None,
         log_timeout: float = 15.0,
+        client_log_expectations: Sequence[ClientLogExpectation] | None = None,
     ) -> TestRunResult:
         """Run the script across all configured clients."""
 
         selected_clients = self._select_clients(client_names)
         expectations = tuple(expect_server_logs or ())
+        client_monitor_lookup = self._collect_client_monitors(selected_clients)
+        client_expectations = tuple(client_log_expectations or ())
         if server_address:
             results = self._run_on_clients(server_address, script, selected_clients)
             log_expectations = self._evaluate_expectations(expectations, log_timeout, None)
+            client_log_results = self._evaluate_client_expectations(
+                client_expectations, log_timeout, client_monitor_lookup
+            )
             return TestRunResult(
                 script=script,
                 client_results=tuple(results),
                 log_expectations=log_expectations,
+                client_log_expectations=client_log_results,
             )
 
         if self.server_controller is None:
@@ -348,10 +434,14 @@ class TestOrchestrator:
             monitor.mark()
             results = self._run_on_clients(controller.server_address, script, selected_clients)
             log_expectations = self._evaluate_expectations(expectations, log_timeout, monitor)
+            client_log_results = self._evaluate_client_expectations(
+                client_expectations, log_timeout, client_monitor_lookup
+            )
         return TestRunResult(
             script=script,
             client_results=tuple(results),
             log_expectations=log_expectations,
+            client_log_expectations=client_log_results,
         )
 
     def run_suite(
@@ -370,6 +460,7 @@ class TestOrchestrator:
                     client_names=run.client_names,
                     expect_server_logs=run.expect_server_logs,
                     log_timeout=run.log_timeout,
+                    client_log_expectations=run.client_log_expectations,
                 )
                 results.append(result)
                 if run.wait_after > 0 and iteration + 1 < run.iterations:
@@ -389,10 +480,13 @@ __all__ = [
     "PlaybackLog",
     "PlaybackEvent",
     "LogExpectationResult",
+    "ClientLogExpectation",
+    "ClientLogExpectationResult",
     "ClientRunResult",
     "TestRunResult",
     "BotRunContext",
     "ServerLogMonitor",
+    "ClientLogMonitor",
 ]
 
 
@@ -410,6 +504,41 @@ class ServerLogMonitor:
 
     def snapshot(self) -> str:
         return self._read()
+
+    def mark(self) -> None:
+        content = self._read()
+        self._offset = len(content)
+
+    def wait_for(self, phrase: str, timeout: float = 10.0, poll_interval: float = 0.5) -> bool:
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            content = self._read()
+            segment = content[self._offset :]
+            if phrase in segment:
+                self._offset = len(content)
+                return True
+            self._offset = len(content)
+            time.sleep(poll_interval)
+        return False
+
+    def contains(self, phrase: str) -> bool:
+        return phrase in self._read()
+
+
+@dataclass(slots=True)
+class ClientLogMonitor:
+    """Tail-like monitor for client side artefacts such as chatlogs."""
+
+    client_name: str
+    name: str
+    log_path: Path
+    encoding: str = "utf-8"
+    _offset: int = 0
+
+    def _read(self) -> str:
+        if not self.log_path.exists():
+            return ""
+        return self.log_path.read_text(encoding=self.encoding, errors="ignore")
 
     def mark(self) -> None:
         content = self._read()

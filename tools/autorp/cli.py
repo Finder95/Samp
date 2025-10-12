@@ -74,6 +74,23 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Binarna nazwa polecenia Wine uruchamiającego klienta (domyślnie wine)",
     )
     parser.add_argument(
+        "--xdotool-binary",
+        type=str,
+        default="xdotool",
+        help="Polecenie xdotool używane do fokusu okna klienta",
+    )
+    parser.add_argument(
+        "--bot-focus-window",
+        action="store_true",
+        help="Aktywuj okno SA-MP zanim rozpoczniesz wykonywanie skryptu",
+    )
+    parser.add_argument(
+        "--bot-window-title",
+        type=str,
+        default=None,
+        help="Niestandardowy tytuł okna SA-MP wyszukiwany przez xdotool",
+    )
+    parser.add_argument(
         "--bot-command-file",
         type=Path,
         default=None,
@@ -122,6 +139,20 @@ def _build_client(
         gta_dir.mkdir(parents=True, exist_ok=True)
         launcher = definition.launcher or "samp.exe"
         wine_binary = definition.wine_binary or args.wine_binary
+        focus_window = definition.focus_window or args.bot_focus_window
+        window_title = definition.window_title or args.bot_window_title or "San Andreas Multiplayer"
+        xdotool_binary = definition.xdotool_binary or args.xdotool_binary
+        log_files: list[tuple[str, Path, str]] = []
+        for log_definition in definition.logs:
+            log_path = Path(log_definition.path)
+            if not log_path.is_absolute():
+                log_path = package_dir / log_path
+            log_files.append((log_definition.name, log_path, log_definition.encoding))
+        chatlog_path = None
+        if definition.chatlog:
+            chatlog_path = Path(definition.chatlog)
+            if not chatlog_path.is_absolute():
+                chatlog_path = package_dir / chatlog_path
         return WineSampClient(
             name=definition.name,
             gta_directory=gta_dir,
@@ -129,9 +160,17 @@ def _build_client(
             wine_binary=wine_binary,
             command_file=command_path,
             dry_run=definition.dry_run or args.bot_dry_run,
-            extra_env=definition.environment,
+            extra_env={**definition.environment},
             connect_delay=definition.connect_delay,
             reset_commands_on_connect=definition.reset_commands_on_connect,
+            focus_window=focus_window,
+            window_title=window_title,
+            xdotool_binary=xdotool_binary,
+            log_files=tuple(log_files),
+            chatlog_path=chatlog_path,
+            chatlog_encoding=definition.chatlog_encoding or "utf-8",
+            setup_actions=definition.setup_actions,
+            teardown_actions=definition.teardown_actions,
         )
 
     if definition.type.lower() == "buffer":
@@ -159,6 +198,9 @@ def _fallback_client(args: argparse.Namespace, package_dir: Path) -> DummyBotCli
             wine_binary=args.wine_binary,
             command_file=args.bot_command_file,
             dry_run=args.bot_dry_run,
+            focus_window=args.bot_focus_window,
+            window_title=args.bot_window_title or "San Andreas Multiplayer",
+            xdotool_binary=args.xdotool_binary,
         )
     command_file = args.bot_command_file or package_dir / "Test" / "bot_commands.log"
     transport = FileCommandTransport(command_file)

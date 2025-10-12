@@ -8,7 +8,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable, Iterable, Protocol
 
-from .tester import BotClient, BotScript, PlaybackEvent, PlaybackLog, ScriptAction
+from .tester import (
+    BotClient,
+    BotScript,
+    ClientLogMonitor,
+    PlaybackEvent,
+    PlaybackLog,
+    ScriptAction,
+)
 
 
 class CommandTransport(Protocol):
@@ -62,6 +69,66 @@ class BufferedCommandTransport:
 
 
 @dataclass(slots=True)
+class WineWindowInteractor:
+    """Control Wine windows through xdotool to drive the SA-MP client."""
+
+    window_title: str = "San Andreas Multiplayer"
+    xdotool_binary: str = "xdotool"
+    dry_run: bool = False
+    dry_run_window_id: str = "0x1"
+    executed_commands: list[list[str]] = field(default_factory=list)
+
+    def _invoke(self, *args: str, capture_output: bool = False):
+        command = [self.xdotool_binary, *args]
+        self.executed_commands.append(command)
+        if self.dry_run:
+            if capture_output:
+                return type("Result", (), {"stdout": self.dry_run_window_id})()
+            return None
+        return subprocess.run(command, check=True, text=True, capture_output=capture_output)
+
+    def _search_window(self, title: str | None = None) -> str | None:
+        result = self._invoke("search", "--name", title or self.window_title, capture_output=True)
+        if result is None:
+            return self.dry_run_window_id
+        output = str(result.stdout or "").strip().splitlines()
+        return output[0] if output else None
+
+    def focus(self, title: str | None = None) -> None:
+        window_id = self._search_window(title)
+        if not window_id:
+            raise RuntimeError("Nie znaleziono okna klienta SA-MP do aktywacji")
+        self._invoke("windowactivate", "--sync", window_id)
+        self._invoke("windowraise", window_id)
+
+    def type_text(self, text: str) -> None:
+        if not text:
+            return
+        self._invoke("type", "--delay", "25", text)
+
+    def mouse_move(self, x: float, y: float, mode: str = "absolute", duration: float = 0.0) -> None:
+        if mode == "relative":
+            self._invoke("mousemove_relative", "--", str(int(x)), str(int(y)))
+        else:
+            args = ["mousemove", "--sync", str(int(x)), str(int(y))]
+            if duration > 0:
+                args.extend(["--delay", str(int(duration * 1000))])
+            self._invoke(*args)
+
+    def mouse_click(self, button: str, state: str = "click") -> None:
+        normalized = button.lower()
+        mapping = {"left": "1", "right": "3", "middle": "2"}
+        target = mapping.get(normalized, normalized)
+        if state in {"down", "hold"}:
+            self._invoke("mousedown", target)
+        elif state in {"up", "release"}:
+            self._invoke("mouseup", target)
+        elif state == "double":
+            self._invoke("click", "--repeat", "2", target)
+        else:
+            self._invoke("click", target)
+
+@dataclass(slots=True)
 class ActionTranslator:
     """Translate high-level script actions into client-understood payloads."""
 
@@ -72,6 +139,12 @@ class ActionTranslator:
     option_token: str = "OPTION"
     wait_for_token: str = "WAITFOR"
     macro_token: str = "MACRO"
+    type_token: str = "TYPE"
+    focus_token: str = "FOCUS"
+    mouse_token: str = "MOUSE"
+    mouse_click_token: str = "MOUSECLICK"
+    screenshot_token: str = "SCREENSHOT"
+    config_token: str = "CONFIG"
 
     def translate(self, action: ScriptAction) -> tuple[str, ...]:
         if action.type == "chat" and action.message is not None:
@@ -119,6 +192,40 @@ class ActionTranslator:
             phrase = str(action.payload.get("phrase", action.payload.get("value", "")))
             timeout = float(action.payload.get("timeout", action.payload.get("seconds", 10.0)))
             return (f"{self.wait_for_token}:{timeout}:{phrase}",)
+        if action.type == "focus_window":
+            title = action.payload.get("title")
+            if title:
+                return (f"{self.focus_token}:{title}",)
+            return (self.focus_token,)
+        if action.type == "type_text":
+            text = action.payload.get("text", action.payload.get("value"))
+            if text is None:
+                raise ValueError("Brak tekstu dla akcji type_text")
+            return (f"{self.type_token}:{text}",)
+        if action.type in {"mouse_move", "mouse"}:
+            x = action.payload.get("x")
+            y = action.payload.get("y")
+            if x is None or y is None:
+                raise ValueError("Akcja mouse_move wymaga współrzędnych x i y")
+            mode = str(action.payload.get("mode", "absolute"))
+            duration = float(action.payload.get("duration", 0.0))
+            return (f"{self.mouse_token}:{mode}:{float(x)}:{float(y)}:{duration}",)
+        if action.type in {"mouse_click", "click"}:
+            button = str(action.payload.get("button", "left"))
+            action_mode = str(action.payload.get("state", action.payload.get("mode", "click")))
+            return (f"{self.mouse_click_token}:{button}:{action_mode}",)
+        if action.type == "screenshot":
+            name = str(action.payload.get("name", "capture"))
+            target = action.payload.get("path") or action.payload.get("directory")
+            if target:
+                return (f"{self.screenshot_token}:{name}:{target}",)
+            return (f"{self.screenshot_token}:{name}",)
+        if action.type == "config":
+            name = str(action.payload.get("name", action.payload.get("key", "")))
+            if not name:
+                raise ValueError("Akcja config wymaga nazwy parametru")
+            value = action.payload.get("value")
+            return (f"{self.config_token}:{name}={value}",)
         command = action.command or action.payload.get("value")
         if command is None:
             return (f"ACTION:{action.type}",)
@@ -167,13 +274,36 @@ class WineSampClient(BotClient):
     extra_env: dict[str, str] = field(default_factory=dict)
     connect_delay: float = 0.0
     reset_commands_on_connect: bool = True
+    focus_window: bool = False
+    window_title: str = "San Andreas Multiplayer"
+    xdotool_binary: str = "xdotool"
+    log_files: tuple[tuple[str, Path, str], ...] = ()
+    chatlog_path: Path | None = None
+    chatlog_encoding: str = "utf-8"
+    setup_actions: tuple[dict[str, object], ...] = ()
+    teardown_actions: tuple[dict[str, object], ...] = ()
 
     def __post_init__(self) -> None:
         if self.command_file is None:
             self.command_file = self.gta_directory / "bot_commands.txt"
         self.transport = FileCommandTransport(self.command_file)
         self._process: subprocess.Popen[str] | None = None
-        self._runner = ScriptRunner(self.transport)
+        self.translator = ActionTranslator()
+        self._runner = ScriptRunner(self.transport, translator=self.translator)
+        self._runner.on_event = self._handle_event
+        self.window_interactor: WineWindowInteractor | None = None
+        if self.focus_window:
+            self.window_interactor = WineWindowInteractor(
+                window_title=self.window_title,
+                xdotool_binary=self.xdotool_binary,
+                dry_run=self.dry_run,
+            )
+        self._client_log_monitors = self._build_log_monitors()
+        self._setup_script = BotScript(description=f"setup:{self.name}", actions=self.setup_actions)
+        self._teardown_script = BotScript(
+            description=f"teardown:{self.name}", actions=self.teardown_actions
+        ) if self.teardown_actions else None
+        self.captured_screenshots: list[Path] = []
 
     def _reset_command_file(self) -> None:
         if self.command_file is not None:
@@ -199,9 +329,20 @@ class WineSampClient(BotClient):
         self._launch_process(server_address)
         if self.connect_delay > 0:
             time.sleep(self.connect_delay)
+        if self.window_interactor is not None:
+            try:
+                self.window_interactor.focus()
+            except RuntimeError:
+                if not self.dry_run:
+                    raise
 
     def execute_script(self, script: BotScript) -> PlaybackLog:
-        return self._runner.run(script)
+        if self.setup_actions:
+            self._runner.run(self._setup_script)
+        log = self._runner.run(script)
+        if self.teardown_actions and self._teardown_script is not None:
+            self._runner.run(self._teardown_script)
+        return log
 
     def disconnect(self) -> None:
         if self._process is None:
@@ -214,6 +355,60 @@ class WineSampClient(BotClient):
                 self._process.kill()
         self._process = None
 
+    def _build_log_monitors(self) -> tuple[ClientLogMonitor, ...]:
+        entries: list[tuple[str, Path, str]] = list(self.log_files)
+        chatlog = self.chatlog_path or self.gta_directory / "SAMP" / "chatlog.txt"
+        if not any(name == "chatlog" for name, _, _ in entries):
+            entries.append(("chatlog", chatlog, self.chatlog_encoding))
+        monitors: list[ClientLogMonitor] = []
+        for name, path, encoding in entries:
+            resolved = path
+            if not resolved.is_absolute():
+                resolved = self.gta_directory / resolved
+            resolved.parent.mkdir(parents=True, exist_ok=True)
+            monitors.append(
+                ClientLogMonitor(
+                    client_name=self.name,
+                    name=name,
+                    log_path=resolved,
+                    encoding=encoding,
+                )
+            )
+        return tuple(monitors)
+
+    def client_log_monitors(self) -> tuple[ClientLogMonitor, ...]:
+        return self._client_log_monitors
+
+    def _handle_event(self, event: PlaybackEvent) -> None:
+        if self.window_interactor is None:
+            return
+        for payload in event.command_payloads:
+            if payload.startswith(self.translator.focus_token):
+                parts = payload.split(":", 1)
+                title = parts[1] if len(parts) > 1 else None
+                try:
+                    self.window_interactor.focus(title or None)
+                except RuntimeError:
+                    if not self.dry_run:
+                        raise
+            elif payload.startswith(f"{self.translator.type_token}:"):
+                text = payload.split(":", 1)[1]
+                self.window_interactor.type_text(text)
+            elif payload.startswith(f"{self.translator.mouse_token}:"):
+                _, mode, x, y, duration = payload.split(":", 4)
+                self.window_interactor.mouse_move(float(x), float(y), mode=mode, duration=float(duration))
+            elif payload.startswith(f"{self.translator.mouse_click_token}:"):
+                _, button, state = payload.split(":", 2)
+                self.window_interactor.mouse_click(button, state)
+            elif payload.startswith(f"{self.translator.screenshot_token}:"):
+                parts = payload.split(":", 2)
+                name = parts[1] if len(parts) > 1 else "capture"
+                target = parts[2] if len(parts) > 2 else None
+                path = Path(target) if target else self.gta_directory / f"{name}.png"
+                if not path.is_absolute():
+                    path = self.gta_directory / path
+                self.captured_screenshots.append(path)
+
 
 @dataclass(slots=True)
 class DummyBotClient(BotClient):
@@ -225,6 +420,7 @@ class DummyBotClient(BotClient):
     connected_to: str | None = None
     executed_logs: list[PlaybackLog] = field(default_factory=list)
     connect_delay: float = 0.0
+    log_monitors: tuple[ClientLogMonitor, ...] = ()
 
     def __post_init__(self) -> None:
         if self.runner is None:
@@ -243,11 +439,15 @@ class DummyBotClient(BotClient):
     def disconnect(self) -> None:  # pragma: no cover - trivial
         self.connected_to = None
 
+    def client_log_monitors(self) -> tuple[ClientLogMonitor, ...]:  # pragma: no cover - trivial
+        return self.log_monitors
+
 
 __all__ = [
     "CommandTransport",
     "FileCommandTransport",
     "BufferedCommandTransport",
+    "WineWindowInteractor",
     "ActionTranslator",
     "ScriptRunner",
     "WineSampClient",
