@@ -411,6 +411,36 @@ class ScenarioStatistics:
 
 
 @dataclass(slots=True)
+class ClientStatistics:
+    """Aggregate statistics for runs executed by a specific client."""
+
+    name: str
+    total_runs: int
+    successful_runs: int
+    failed_runs: int
+    runs_with_logs: int
+    total_commands: int
+    average_commands: float | None
+    total_log_duration: float
+    average_log_duration: float | None
+    last_status: str
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "client": self.name,
+            "total": self.total_runs,
+            "passed": self.successful_runs,
+            "failed": self.failed_runs,
+            "runs_with_logs": self.runs_with_logs,
+            "total_commands": self.total_commands,
+            "average_commands": self.average_commands,
+            "total_log_duration": self.total_log_duration,
+            "average_log_duration": self.average_log_duration,
+            "last_status": self.last_status,
+        }
+
+
+@dataclass(slots=True)
 class BotRunContext:
     """Definition of a single orchestrated run including expectations."""
 
@@ -1092,6 +1122,44 @@ class TestOrchestrator:
             )
         return summaries
 
+    @staticmethod
+    def summarise_per_client(
+        results: Sequence[TestRunResult],
+    ) -> dict[str, ClientStatistics]:
+        """Compute per-client statistics for a sequence of run results."""
+
+        grouped: dict[str, list[tuple[TestRunResult, ClientRunResult]]] = {}
+        for result in results:
+            for client_result in result.client_results:
+                grouped.setdefault(client_result.client_name, []).append((result, client_result))
+
+        summaries: dict[str, ClientStatistics] = {}
+        for name in sorted(grouped):
+            entries = grouped[name]
+            total_runs = len(entries)
+            successful_runs = sum(1 for run, _ in entries if run.is_successful())
+            runs_with_logs = sum(1 for _, client in entries if client.log is not None)
+            logs = [client.log for _, client in entries if client.log is not None]
+            total_commands = sum(log.command_count() for log in logs)
+            total_log_duration = float(sum(log.total_duration() for log in logs)) if logs else 0.0
+            average_commands = (total_commands / runs_with_logs) if runs_with_logs else None
+            average_log_duration = (
+                (total_log_duration / runs_with_logs) if runs_with_logs else None
+            )
+            summaries[name] = ClientStatistics(
+                name=name,
+                total_runs=total_runs,
+                successful_runs=successful_runs,
+                failed_runs=total_runs - successful_runs,
+                runs_with_logs=runs_with_logs,
+                total_commands=total_commands,
+                average_commands=average_commands,
+                total_log_duration=total_log_duration,
+                average_log_duration=average_log_duration,
+                last_status=entries[-1][0].status_label(),
+            )
+        return summaries
+
     def run_suite(
         self,
         runs: Sequence[BotRunContext],
@@ -1149,6 +1217,7 @@ class TestOrchestrator:
 TestOrchestrator.__test__ = False  # type: ignore[attr-defined]
 TestRunResult.__test__ = False  # type: ignore[attr-defined]
 SuiteStatistics.__test__ = False  # type: ignore[attr-defined]
+ClientStatistics.__test__ = False  # type: ignore[attr-defined]
 
 
 __all__ = [
@@ -1170,6 +1239,7 @@ __all__ = [
     "TestRunResult",
     "SuiteStatistics",
     "ScenarioStatistics",
+    "ClientStatistics",
     "BotRunContext",
     "RunAssertionRule",
     "RunAssertionResult",

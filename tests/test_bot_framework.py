@@ -1,6 +1,8 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -22,7 +24,11 @@ from tools.autorp.tester import (
     ClientLogMonitor,
     ClientLogExportRequest,
     ClientRunResult,
+    ClientStatistics,
     LogExpectationResult,
+    PlaybackEvent,
+    PlaybackLog,
+    ScriptAction,
     RunFailure,
     RunAssertionResult,
     RunAssertionRule,
@@ -711,3 +717,75 @@ def test_orchestrator_summarise_per_script_groups_attempts():
     assert stable_stats.total_runs == 1
     assert stable_stats.retries == 0
     assert stable_stats.failure_categories == {}
+
+
+def test_orchestrator_summarise_per_client_collects_log_metrics():
+    def make_event(command: str, start: float, finish: float) -> PlaybackEvent:
+        return PlaybackEvent(
+            action=ScriptAction(type="command", payload={"command": command}),
+            command_payloads=(command,),
+            timestamp=finish,
+            started_at=start,
+            finished_at=finish,
+            duration=finish - start,
+        )
+
+    alpha_log_one = PlaybackLog(
+        script_description="Alpha One",
+        events=(make_event("/hello", 0.0, 1.0),),
+    )
+    alpha_log_two = PlaybackLog(
+        script_description="Alpha Coop",
+        events=(
+            make_event("/step1", 0.0, 1.0),
+            make_event("/step2", 1.0, 2.0),
+        ),
+    )
+    beta_log = PlaybackLog(
+        script_description="Beta Coop",
+        events=(make_event("/assist", 0.0, 0.5),),
+    )
+
+    alpha_success = TestRunResult(
+        script=BotScript(description="Alpha Success"),
+        client_results=(ClientRunResult(client_name="alpha", log=alpha_log_one),),
+        duration=2.0,
+    )
+    alpha_failure = TestRunResult(
+        script=BotScript(description="Alpha Failure"),
+        client_results=(ClientRunResult(client_name="alpha", log=None),),
+        failures=(RunFailure(category="assertion", subject="commands", message="missing"),),
+        duration=1.0,
+    )
+    cooperative_success = TestRunResult(
+        script=BotScript(description="Coop"),
+        client_results=(
+            ClientRunResult(client_name="alpha", log=alpha_log_two),
+            ClientRunResult(client_name="beta", log=beta_log),
+        ),
+        duration=3.0,
+    )
+
+    summaries = TestOrchestrator.summarise_per_client(
+        [alpha_success, alpha_failure, cooperative_success]
+    )
+    assert set(summaries) == {"alpha", "beta"}
+
+    alpha_stats = summaries["alpha"]
+    assert isinstance(alpha_stats, ClientStatistics)
+    assert alpha_stats.total_runs == 3
+    assert alpha_stats.successful_runs == 2
+    assert alpha_stats.failed_runs == 1
+    assert alpha_stats.runs_with_logs == 2
+    assert alpha_stats.total_commands == 3
+    assert alpha_stats.average_commands == pytest.approx(1.5)
+    assert alpha_stats.total_log_duration == pytest.approx(3.0)
+    assert alpha_stats.average_log_duration == pytest.approx(1.5)
+    assert alpha_stats.last_status == "SUCCESS"
+
+    beta_stats = summaries["beta"]
+    assert beta_stats.total_runs == 1
+    assert beta_stats.successful_runs == 1
+    assert beta_stats.runs_with_logs == 1
+    assert beta_stats.total_commands == 1
+    assert beta_stats.average_log_duration == pytest.approx(0.5)

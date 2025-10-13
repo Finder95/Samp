@@ -637,6 +637,7 @@ def main(argv: list[str] | None = None) -> Path:
 
             stats = TestOrchestrator.summarise_results(results)
             scenario_stats = TestOrchestrator.summarise_per_script(results)
+            client_stats = TestOrchestrator.summarise_per_client(results)
             print(
                 "Podsumowanie: "
                 f"{stats.successful_runs}/{stats.total_runs} scenariuszy zakończonych sukcesem"
@@ -679,6 +680,33 @@ def main(argv: list[str] | None = None) -> Path:
                         )
                         print(f"         błędy: {scenario_details}")
 
+            if client_stats:
+                print("   statystyki klientów:")
+                for name, summary in client_stats.items():
+                    print(
+                        "      "
+                        f"{name}: {summary.successful_runs}/{summary.total_runs} udanych, "
+                        f"ostatni wynik {summary.last_status}"
+                    )
+                    print(
+                        "         "
+                        f"logi odtwarzania: {summary.runs_with_logs}/{summary.total_runs}"
+                    )
+                    if summary.total_commands:
+                        average_commands = (
+                            f"{summary.average_commands:.1f}" if summary.average_commands is not None else "-"
+                        )
+                        print(
+                            "         "
+                            f"komendy: łącznie {summary.total_commands}, średnio {average_commands} na log"
+                        )
+                    if summary.average_log_duration is not None:
+                        print(
+                            "         "
+                            f"czas logu: {summary.total_log_duration:.2f}s łącznie, "
+                            f"średnio {summary.average_log_duration:.2f}s"
+                        )
+
             if args.bot_report_json is not None:
                 report_path = args.bot_report_json
                 if not report_path.is_absolute():
@@ -688,6 +716,9 @@ def main(argv: list[str] | None = None) -> Path:
                 summary["per_scenario"] = {
                     description: scenario.as_dict()
                     for description, scenario in scenario_stats.items()
+                }
+                summary["per_client"] = {
+                    name: client.as_dict() for name, client in client_stats.items()
                 }
                 payload = {
                     "generated_gamemode": str(generated_path),
