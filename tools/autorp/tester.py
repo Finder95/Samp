@@ -367,6 +367,10 @@ class SuiteStatistics:
     log_expectation_failures: int
     client_log_expectation_failures: int
     failure_categories: dict[str, int]
+    total_commands: int
+    unique_commands: int
+    top_commands: tuple[tuple[str, int], ...]
+    command_usage: dict[str, int]
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -384,6 +388,13 @@ class SuiteStatistics:
             "log_expectation_failures": self.log_expectation_failures,
             "client_log_expectation_failures": self.client_log_expectation_failures,
             "failure_categories": dict(self.failure_categories),
+            "total_commands": self.total_commands,
+            "unique_commands": self.unique_commands,
+            "top_commands": [
+                {"command": command, "count": count}
+                for command, count in self.top_commands
+            ],
+            "command_usage": dict(self.command_usage),
         }
 
 
@@ -403,6 +414,10 @@ class ScenarioStatistics:
     p90_duration: float | None
     last_status: str
     failure_categories: dict[str, int]
+    total_commands: int
+    unique_commands: int
+    top_commands: tuple[tuple[str, int], ...]
+    command_usage: dict[str, int]
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -418,6 +433,13 @@ class ScenarioStatistics:
             "p90_duration": self.p90_duration,
             "last_status": self.last_status,
             "failure_categories": dict(self.failure_categories),
+            "total_commands": self.total_commands,
+            "unique_commands": self.unique_commands,
+            "top_commands": [
+                {"command": command, "count": count}
+                for command, count in self.top_commands
+            ],
+            "command_usage": dict(self.command_usage),
         }
 
 
@@ -437,6 +459,9 @@ class ClientStatistics:
     average_log_duration: float | None
     median_log_duration: float | None
     last_status: str
+    unique_commands: int
+    top_commands: tuple[tuple[str, int], ...]
+    command_usage: dict[str, int]
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -452,6 +477,12 @@ class ClientStatistics:
             "average_log_duration": self.average_log_duration,
             "median_log_duration": self.median_log_duration,
             "last_status": self.last_status,
+            "unique_commands": self.unique_commands,
+            "top_commands": [
+                {"command": command, "count": count}
+                for command, count in self.top_commands
+            ],
+            "command_usage": dict(self.command_usage),
         }
 
 
@@ -472,6 +503,10 @@ class TagStatistics:
     last_status: str
     failure_categories: dict[str, int]
     scenario_counts: dict[str, int]
+    total_commands: int
+    unique_commands: int
+    top_commands: tuple[tuple[str, int], ...]
+    command_usage: dict[str, int]
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -488,6 +523,13 @@ class TagStatistics:
             "last_status": self.last_status,
             "failure_categories": dict(self.failure_categories),
             "scenarios": dict(self.scenario_counts),
+            "total_commands": self.total_commands,
+            "unique_commands": self.unique_commands,
+            "top_commands": [
+                {"command": command, "count": count}
+                for command, count in self.top_commands
+            ],
+            "command_usage": dict(self.command_usage),
         }
 
 
@@ -1133,6 +1175,25 @@ class TestOrchestrator:
         return total, average, median, p90, shortest, longest
 
     @staticmethod
+    def _command_summary(
+        logs: Iterable[PlaybackLog],
+        limit: int = 5,
+    ) -> tuple[int, int, dict[str, int], tuple[tuple[str, int], ...]]:
+        counter: Counter[str] = Counter()
+        for log in logs:
+            for payload in log.commands_sent():
+                if payload:
+                    counter[payload] += 1
+        total_commands = int(sum(counter.values()))
+        unique_commands = len(counter)
+        sorted_by_frequency = sorted(
+            counter.items(), key=lambda item: (-item[1], item[0])
+        )
+        top_commands: tuple[tuple[str, int], ...] = tuple(sorted_by_frequency[:limit])
+        ordered_usage = dict(sorted(counter.items()))
+        return total_commands, unique_commands, ordered_usage, top_commands
+
+    @staticmethod
     def summarise_results(results: Sequence[TestRunResult]) -> SuiteStatistics:
         """Compute aggregate statistics for a collection of test runs."""
 
@@ -1161,6 +1222,18 @@ class TestOrchestrator:
         for result in results:
             for failure in result.failures:
                 category_counts[failure.category] += 1
+        all_logs = [
+            client.log
+            for result in results
+            for client in result.client_results
+            if client.log is not None
+        ]
+        (
+            total_commands,
+            unique_commands,
+            command_usage,
+            top_commands,
+        ) = TestOrchestrator._command_summary(all_logs)
         return SuiteStatistics(
             total_runs=total_runs,
             successful_runs=successful_runs,
@@ -1176,6 +1249,10 @@ class TestOrchestrator:
             log_expectation_failures=log_expectation_failures,
             client_log_expectation_failures=client_log_expectation_failures,
             failure_categories=dict(category_counts),
+            total_commands=total_commands,
+            unique_commands=unique_commands,
+            top_commands=top_commands,
+            command_usage=command_usage,
         )
 
     @staticmethod
@@ -1208,6 +1285,18 @@ class TestOrchestrator:
                 1 for run in runs if run.attempt_index > 1 and run.is_successful()
             )
             category_counts: Counter[str] = Counter()
+            logs = [
+                client.log
+                for run in runs
+                for client in run.client_results
+                if client.log is not None
+            ]
+            (
+                total_commands,
+                unique_commands,
+                command_usage,
+                top_commands,
+            ) = TestOrchestrator._command_summary(logs)
             for run in runs:
                 for failure in run.failures:
                     category_counts[failure.category] += 1
@@ -1224,6 +1313,10 @@ class TestOrchestrator:
                 p90_duration=p90_duration,
                 last_status=runs[-1].status_label(),
                 failure_categories=dict(category_counts),
+                total_commands=total_commands,
+                unique_commands=unique_commands,
+                top_commands=top_commands,
+                command_usage=command_usage,
             )
         return summaries
 
@@ -1249,6 +1342,12 @@ class TestOrchestrator:
             total_commands = int(sum(command_counts))
             median_commands = float(statistics.median(command_counts)) if command_counts else None
             average_commands = (total_commands / runs_with_logs) if runs_with_logs else None
+            (
+                aggregated_commands,
+                unique_commands,
+                command_usage,
+                top_commands,
+            ) = TestOrchestrator._command_summary(logs)
             durations = [float(log.total_duration()) for log in logs]
             (
                 total_log_duration,
@@ -1264,13 +1363,16 @@ class TestOrchestrator:
                 successful_runs=successful_runs,
                 failed_runs=total_runs - successful_runs,
                 runs_with_logs=runs_with_logs,
-                total_commands=total_commands,
+                total_commands=aggregated_commands,
                 average_commands=average_commands,
                 median_commands=median_commands,
                 total_log_duration=total_log_duration,
                 average_log_duration=average_log_duration,
                 median_log_duration=median_log_duration,
                 last_status=entries[-1][0].status_label(),
+                unique_commands=unique_commands,
+                top_commands=top_commands,
+                command_usage=command_usage,
             )
         return summaries
 
@@ -1305,6 +1407,18 @@ class TestOrchestrator:
             )
             category_counts: Counter[str] = Counter()
             scenario_counts: Counter[str] = Counter()
+            logs = [
+                client.log
+                for run in runs
+                for client in run.client_results
+                if client.log is not None
+            ]
+            (
+                total_commands,
+                unique_commands,
+                command_usage,
+                top_commands,
+            ) = TestOrchestrator._command_summary(logs)
             for run in runs:
                 scenario_description = (run.script.description or "").strip() or "scenario"
                 scenario_counts[scenario_description] += 1
@@ -1324,6 +1438,10 @@ class TestOrchestrator:
                 last_status=runs[-1].status_label(),
                 failure_categories=dict(category_counts),
                 scenario_counts=dict(sorted(scenario_counts.items())),
+                total_commands=total_commands,
+                unique_commands=unique_commands,
+                top_commands=top_commands,
+                command_usage=command_usage,
             )
         return summaries
 

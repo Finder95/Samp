@@ -663,6 +663,16 @@ def main(argv: list[str] | None = None) -> Path:
                 )
             if duration_segments:
                 print(f"   czasy: {', '.join(duration_segments)}")
+            if stats.total_commands:
+                print(
+                    "   komendy: "
+                    f"łącznie {stats.total_commands}, unikalnych {stats.unique_commands}"
+                )
+                if stats.top_commands:
+                    top_preview = ", ".join(
+                        f"{command} ({count})" for command, count in stats.top_commands
+                    )
+                    print(f"   najczęstsze komendy: {top_preview}")
             if stats.failure_categories:
                 details = ", ".join(
                     f"{category}: {count}" for category, count in sorted(stats.failure_categories.items())
@@ -705,6 +715,17 @@ def main(argv: list[str] | None = None) -> Path:
                             for category, count in sorted(summary.failure_categories.items())
                         )
                         print(f"         błędy: {scenario_details}")
+                    if summary.total_commands:
+                        print(
+                            "         "
+                            f"komendy: łącznie {summary.total_commands}, unikalnych {summary.unique_commands}"
+                        )
+                        if summary.top_commands:
+                            scenario_top = ", ".join(
+                                f"{command} ({count})"
+                                for command, count in summary.top_commands
+                            )
+                            print(f"         najczęstsze: {scenario_top}")
 
             if client_stats:
                 print("   statystyki klientów:")
@@ -726,11 +747,18 @@ def main(argv: list[str] | None = None) -> Path:
                         )
                         command_line = (
                             "         "
-                            f"komendy: łącznie {summary.total_commands}, średnio {average_commands} na log"
+                            f"komendy: łącznie {summary.total_commands}, średnio {average_commands} na log, "
+                            f"unikalnych {summary.unique_commands}"
                         )
                         if summary.median_commands is not None:
                             command_line += f", mediana {summary.median_commands:.1f}"
                         print(command_line)
+                        if summary.top_commands:
+                            top_line = ", ".join(
+                                f"{command} ({count})"
+                                for command, count in summary.top_commands
+                            )
+                            print(f"         najczęstsze: {top_line}")
                     if summary.average_log_duration is not None:
                         log_line = (
                             "         "
@@ -774,6 +802,17 @@ def main(argv: list[str] | None = None) -> Path:
                             for scenario, count in summary.scenario_counts.items()
                         )
                         print(f"         scenariusze: {scenario_overview}")
+                    if summary.total_commands:
+                        print(
+                            "         "
+                            f"komendy: łącznie {summary.total_commands}, unikalnych {summary.unique_commands}"
+                        )
+                        if summary.top_commands:
+                            top_preview = ", ".join(
+                                f"{command} ({count})"
+                                for command, count in summary.top_commands
+                            )
+                            print(f"         najczęstsze: {top_preview}")
 
             if args.bot_report_json is not None:
                 report_path = args.bot_report_json

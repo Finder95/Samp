@@ -41,6 +41,17 @@ from tools.autorp.tester import (
 )
 
 
+def make_playback_event(command: str, start: float, finish: float) -> PlaybackEvent:
+    return PlaybackEvent(
+        action=ScriptAction(type="command", payload={"command": command}),
+        command_payloads=(command,),
+        timestamp=finish,
+        started_at=start,
+        finished_at=finish,
+        duration=finish - start,
+    )
+
+
 def test_bot_script_iter_actions_prefers_actions():
     script = BotScript(
         description="test",
@@ -636,9 +647,16 @@ def test_server_log_expectation_counts(tmp_path):
 
 def test_orchestrator_summarise_results_compiles_statistics():
     base_script = BotScript(description="Summary Demo")
+    success_log = PlaybackLog(
+        script_description="Summary Demo",
+        events=(
+            make_playback_event("/wave", 0.0, 1.0),
+            make_playback_event("/dance", 1.0, 2.0),
+        ),
+    )
     successful = TestRunResult(
         script=base_script,
-        client_results=(ClientRunResult(client_name="alpha", log=None),),
+        client_results=(ClientRunResult(client_name="alpha", log=success_log),),
         duration=2.5,
         assertions=(
             RunAssertionResult(name="duration", passed=True, actual=2.5, expected={}),
@@ -677,13 +695,28 @@ def test_orchestrator_summarise_results_compiles_statistics():
     assert stats.log_expectation_failures == 1
     assert stats.client_log_expectation_failures == 1
     assert stats.failure_categories == {"assertion": 1}
+    assert stats.total_commands == 2
+    assert stats.unique_commands == 2
+    assert stats.command_usage == {"/dance": 1, "/wave": 1}
+    assert stats.top_commands == (("/dance", 1), ("/wave", 1))
 
 
 def test_orchestrator_summarise_per_script_groups_attempts():
     primary_script = BotScript(description="Retry Demo")
     attempt_one = TestRunResult(
         script=primary_script,
-        client_results=(ClientRunResult(client_name="alpha", log=None),),
+        client_results=(
+            ClientRunResult(
+                client_name="alpha",
+                log=PlaybackLog(
+                    script_description="Retry Demo",
+                    events=(
+                        make_playback_event("/open", 0.0, 1.0),
+                        make_playback_event("/retry", 1.0, 2.0),
+                    ),
+                ),
+            ),
+        ),
         attempt_index=1,
         duration=3.0,
         failures=(
@@ -692,7 +725,18 @@ def test_orchestrator_summarise_per_script_groups_attempts():
     )
     attempt_two = TestRunResult(
         script=primary_script,
-        client_results=(ClientRunResult(client_name="alpha", log=None),),
+        client_results=(
+            ClientRunResult(
+                client_name="alpha",
+                log=PlaybackLog(
+                    script_description="Retry Demo",
+                    events=(
+                        make_playback_event("/open", 0.0, 1.0),
+                        make_playback_event("/success", 1.0, 2.0),
+                    ),
+                ),
+            ),
+        ),
         attempt_index=2,
         duration=4.0,
     )
@@ -717,6 +761,10 @@ def test_orchestrator_summarise_per_script_groups_attempts():
     assert retry_stats.p90_duration == pytest.approx(4.0)
     assert retry_stats.last_status == "SUCCESS"
     assert retry_stats.failure_categories == {"network": 1}
+    assert retry_stats.total_commands == 4
+    assert retry_stats.unique_commands == 3
+    assert retry_stats.command_usage == {"/open": 2, "/retry": 1, "/success": 1}
+    assert retry_stats.top_commands[0] == ("/open", 2)
 
     stable_stats = summaries["Stable"]
     assert stable_stats.total_runs == 1
@@ -724,33 +772,27 @@ def test_orchestrator_summarise_per_script_groups_attempts():
     assert stable_stats.failure_categories == {}
     assert stable_stats.median_duration == pytest.approx(2.0)
     assert stable_stats.p90_duration == pytest.approx(2.0)
+    assert stable_stats.total_commands == 0
+    assert stable_stats.unique_commands == 0
+    assert stable_stats.command_usage == {}
+    assert stable_stats.top_commands == ()
 
 
 def test_orchestrator_summarise_per_client_collects_log_metrics():
-    def make_event(command: str, start: float, finish: float) -> PlaybackEvent:
-        return PlaybackEvent(
-            action=ScriptAction(type="command", payload={"command": command}),
-            command_payloads=(command,),
-            timestamp=finish,
-            started_at=start,
-            finished_at=finish,
-            duration=finish - start,
-        )
-
     alpha_log_one = PlaybackLog(
         script_description="Alpha One",
-        events=(make_event("/hello", 0.0, 1.0),),
+        events=(make_playback_event("/hello", 0.0, 1.0),),
     )
     alpha_log_two = PlaybackLog(
         script_description="Alpha Coop",
         events=(
-            make_event("/step1", 0.0, 1.0),
-            make_event("/step2", 1.0, 2.0),
+            make_playback_event("/step1", 0.0, 1.0),
+            make_playback_event("/step2", 1.0, 2.0),
         ),
     )
     beta_log = PlaybackLog(
         script_description="Beta Coop",
-        events=(make_event("/assist", 0.0, 0.5),),
+        events=(make_playback_event("/assist", 0.0, 0.5),),
     )
 
     alpha_success = TestRunResult(
@@ -791,6 +833,13 @@ def test_orchestrator_summarise_per_client_collects_log_metrics():
     assert alpha_stats.average_log_duration == pytest.approx(1.5)
     assert alpha_stats.median_log_duration == pytest.approx(1.5)
     assert alpha_stats.last_status == "SUCCESS"
+    assert alpha_stats.unique_commands == 3
+    assert alpha_stats.command_usage == {"/hello": 1, "/step1": 1, "/step2": 1}
+    assert alpha_stats.top_commands == (
+        ("/hello", 1),
+        ("/step1", 1),
+        ("/step2", 1),
+    )
 
     beta_stats = summaries["beta"]
     assert beta_stats.total_runs == 1
@@ -800,26 +849,56 @@ def test_orchestrator_summarise_per_client_collects_log_metrics():
     assert beta_stats.average_log_duration == pytest.approx(0.5)
     assert beta_stats.median_commands == pytest.approx(1.0)
     assert beta_stats.median_log_duration == pytest.approx(0.5)
+    assert beta_stats.unique_commands == 1
+    assert beta_stats.command_usage == {"/assist": 1}
+    assert beta_stats.top_commands == (("/assist", 1),)
 
 
 def test_orchestrator_summarise_per_tag_groups_runs():
     flaky_success = TestRunResult(
         script=BotScript(description="Heist"),
-        client_results=(ClientRunResult(client_name="alpha", log=None),),
+        client_results=(
+            ClientRunResult(
+                client_name="alpha",
+                log=PlaybackLog(
+                    script_description="Heist",
+                    events=(
+                        make_playback_event("/enter", 0.0, 1.0),
+                        make_playback_event("/loot", 1.0, 2.0),
+                    ),
+                ),
+            ),
+        ),
         tags=("smoke", "p1"),
         attempt_index=2,
         duration=2.5,
     )
     smoke_failure = TestRunResult(
         script=BotScript(description="FailCase"),
-        client_results=(ClientRunResult(client_name="alpha", log=None),),
+        client_results=(
+            ClientRunResult(
+                client_name="alpha",
+                log=PlaybackLog(
+                    script_description="FailCase",
+                    events=(make_playback_event("/enter", 0.0, 1.0),),
+                ),
+            ),
+        ),
         tags=("smoke",),
         failures=(RunFailure(category="assertion", subject="count", message="mismatch"),),
         duration=3.0,
     )
     regression = TestRunResult(
         script=BotScript(description="Regression"),
-        client_results=(ClientRunResult(client_name="beta", log=None),),
+        client_results=(
+            ClientRunResult(
+                client_name="beta",
+                log=PlaybackLog(
+                    script_description="Regression",
+                    events=(make_playback_event("/deploy", 0.0, 1.5),),
+                ),
+            ),
+        ),
         tags=("p1",),
         duration=4.0,
     )
@@ -843,6 +922,10 @@ def test_orchestrator_summarise_per_tag_groups_runs():
     assert smoke_stats.failure_categories == {"assertion": 1}
     assert smoke_stats.scenario_counts == {"FailCase": 1, "Heist": 1}
     assert smoke_stats.last_status == "SUCCESS"
+    assert smoke_stats.total_commands == 3
+    assert smoke_stats.unique_commands == 2
+    assert smoke_stats.command_usage == {"/enter": 2, "/loot": 1}
+    assert smoke_stats.top_commands[0] == ("/enter", 2)
 
     p1_stats = summaries["p1"]
     assert p1_stats.total_runs == 2
@@ -857,3 +940,7 @@ def test_orchestrator_summarise_per_tag_groups_runs():
     assert p1_stats.failure_categories == {}
     assert p1_stats.scenario_counts == {"Heist": 1, "Regression": 1}
     assert p1_stats.last_status == "SUCCESS"
+    assert p1_stats.total_commands == 3
+    assert p1_stats.unique_commands == 3
+    assert p1_stats.command_usage == {"/deploy": 1, "/enter": 1, "/loot": 1}
+    assert p1_stats.top_commands[0] == ("/deploy", 1)
