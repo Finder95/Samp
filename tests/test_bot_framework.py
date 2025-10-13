@@ -319,6 +319,26 @@ def test_orchestrator_records_playback_and_screenshots(tmp_path):
     assert result.is_successful()
 
 
+def test_register_script_slugifies_and_deduplicates(tmp_path):
+    transport = BufferedCommandTransport()
+    client = DummyBotClient(name="dummy", transport=transport)
+    orchestrator = TestOrchestrator(clients=[client], scripts_dir=tmp_path)
+    script = BotScript(
+        description="Patrol: Downtown / #1",
+        commands=("/start",),
+    )
+    saved_path = orchestrator.register_script(script)
+    assert saved_path.parent == tmp_path
+    assert saved_path.name.startswith("patrol_downtown_1")
+    duplicate = orchestrator.register_script(script)
+    assert duplicate.parent == tmp_path
+    assert duplicate != saved_path
+    assert duplicate.name.startswith("patrol_downtown_1")
+    anonymous = BotScript(description="  ", commands=("/a",))
+    anon_path = orchestrator.register_script(anonymous)
+    assert anon_path.name.startswith("scenario")
+
+
 def test_orchestrator_exports_logs(tmp_path):
     server_log_path = tmp_path / "server_log.txt"
     server_log_path.write_text("", encoding="utf-8")

@@ -471,11 +471,24 @@ class TestOrchestrator:
         self.scripts_dir.mkdir(parents=True, exist_ok=True)
         self.server_controller = server_controller
 
+    def _slugify(self, text: str | None) -> str:
+        normalised = (text or "").strip().lower()
+        if not normalised:
+            return "scenario"
+        safe = re.sub(r"[^a-z0-9._-]+", "_", normalised)
+        safe = safe.strip("._-")
+        return safe or "scenario"
+
     def register_script(self, script: BotScript) -> Path:
         """Persist script to disk for inspection or reuse."""
-        target = self.scripts_dir / f"{script.description.replace(' ', '_')}.json"
-        target.write_text(script.to_json(), encoding="utf-8")
-        return target
+        base_name = self._slugify(script.description)
+        candidate = self.scripts_dir / f"{base_name}.json"
+        suffix = 1
+        while candidate.exists():
+            candidate = self.scripts_dir / f"{base_name}_{suffix}.json"
+            suffix += 1
+        candidate.write_text(script.to_json(), encoding="utf-8")
+        return candidate
 
     def _select_clients(self, client_names: Sequence[str] | None) -> list[BotClient]:
         if not client_names:
