@@ -41,10 +41,25 @@ from tools.autorp.tester import (
 )
 
 
-def make_playback_event(command: str, start: float, finish: float) -> PlaybackEvent:
+def make_playback_event(
+    command: str,
+    start: float,
+    finish: float,
+    *,
+    action_type: str = "command",
+    payload: dict[str, object] | None = None,
+    command_payloads: tuple[str, ...] | None = None,
+) -> PlaybackEvent:
+    if payload is None:
+        if action_type == "command":
+            payload = {"command": command}
+        else:
+            payload = {}
+    if command_payloads is None:
+        command_payloads = (command,) if command and action_type == "command" else ()
     return PlaybackEvent(
-        action=ScriptAction(type="command", payload={"command": command}),
-        command_payloads=(command,),
+        action=ScriptAction(type=action_type, payload=payload),
+        command_payloads=command_payloads,
         timestamp=finish,
         started_at=start,
         finished_at=finish,
@@ -652,11 +667,33 @@ def test_orchestrator_summarise_results_compiles_statistics():
         events=(
             make_playback_event("/wave", 0.0, 1.0),
             make_playback_event("/dance", 1.0, 2.0),
+            make_playback_event(
+                "",
+                2.0,
+                3.0,
+                action_type="wait",
+                payload={"seconds": 1.0},
+                command_payloads=(),
+            ),
+            make_playback_event(
+                "",
+                3.0,
+                3.0,
+                action_type="screenshot",
+                payload={"name": "checkpoint"},
+                command_payloads=(),
+            ),
         ),
     )
     successful = TestRunResult(
         script=base_script,
-        client_results=(ClientRunResult(client_name="alpha", log=success_log),),
+        client_results=(
+            ClientRunResult(
+                client_name="alpha",
+                log=success_log,
+                screenshots=(Path("summary-success.png"),),
+            ),
+        ),
         duration=2.5,
         assertions=(
             RunAssertionResult(name="duration", passed=True, actual=2.5, expected={}),
@@ -664,7 +701,13 @@ def test_orchestrator_summarise_results_compiles_statistics():
     )
     failing = TestRunResult(
         script=BotScript(description="Failing"),
-        client_results=(ClientRunResult(client_name="beta", log=None),),
+        client_results=(
+            ClientRunResult(
+                client_name="beta",
+                log=None,
+                screenshots=(Path("summary-failure.png"),),
+            ),
+        ),
         log_expectations=(LogExpectationResult(phrase="ready", matched=False),),
         client_log_expectations=(
             ClientLogExpectationResult(
@@ -699,6 +742,11 @@ def test_orchestrator_summarise_results_compiles_statistics():
     assert stats.unique_commands == 2
     assert stats.command_usage == {"/dance": 1, "/wave": 1}
     assert stats.top_commands == (("/dance", 1), ("/wave", 1))
+    assert stats.total_actions == 4
+    assert stats.action_types == {"command": 2, "screenshot": 1, "wait": 1}
+    assert stats.screenshot_actions == 1
+    assert stats.captured_screenshots == 2
+    assert stats.total_wait_time == pytest.approx(1.0)
 
 
 def test_orchestrator_summarise_per_script_groups_attempts():
@@ -713,8 +761,25 @@ def test_orchestrator_summarise_per_script_groups_attempts():
                     events=(
                         make_playback_event("/open", 0.0, 1.0),
                         make_playback_event("/retry", 1.0, 2.0),
+                        make_playback_event(
+                            "",
+                            2.0,
+                            3.0,
+                            action_type="wait",
+                            payload={"seconds": 1.0},
+                            command_payloads=(),
+                        ),
+                        make_playback_event(
+                            "",
+                            3.0,
+                            3.0,
+                            action_type="screenshot",
+                            payload={"name": "retry"},
+                            command_payloads=(),
+                        ),
                     ),
                 ),
+                screenshots=(Path("retry-attempt.png"),),
             ),
         ),
         attempt_index=1,
@@ -733,8 +798,17 @@ def test_orchestrator_summarise_per_script_groups_attempts():
                     events=(
                         make_playback_event("/open", 0.0, 1.0),
                         make_playback_event("/success", 1.0, 2.0),
+                        make_playback_event(
+                            "",
+                            2.0,
+                            2.0,
+                            action_type="screenshot",
+                            payload={"name": "success"},
+                            command_payloads=(),
+                        ),
                     ),
                 ),
+                screenshots=(Path("retry-success.png"),),
             ),
         ),
         attempt_index=2,
@@ -765,6 +839,11 @@ def test_orchestrator_summarise_per_script_groups_attempts():
     assert retry_stats.unique_commands == 3
     assert retry_stats.command_usage == {"/open": 2, "/retry": 1, "/success": 1}
     assert retry_stats.top_commands[0] == ("/open", 2)
+    assert retry_stats.total_actions == 7
+    assert retry_stats.action_types == {"command": 4, "screenshot": 2, "wait": 1}
+    assert retry_stats.screenshot_actions == 2
+    assert retry_stats.captured_screenshots == 2
+    assert retry_stats.total_wait_time == pytest.approx(1.0)
 
     stable_stats = summaries["Stable"]
     assert stable_stats.total_runs == 1
@@ -776,6 +855,11 @@ def test_orchestrator_summarise_per_script_groups_attempts():
     assert stable_stats.unique_commands == 0
     assert stable_stats.command_usage == {}
     assert stable_stats.top_commands == ()
+    assert stable_stats.total_actions == 0
+    assert stable_stats.action_types == {}
+    assert stable_stats.screenshot_actions == 0
+    assert stable_stats.captured_screenshots == 0
+    assert stable_stats.total_wait_time == pytest.approx(0.0)
 
 
 def test_orchestrator_summarise_per_client_collects_log_metrics():
@@ -787,17 +871,57 @@ def test_orchestrator_summarise_per_client_collects_log_metrics():
         script_description="Alpha Coop",
         events=(
             make_playback_event("/step1", 0.0, 1.0),
-            make_playback_event("/step2", 1.0, 2.0),
+            make_playback_event(
+                "",
+                1.0,
+                2.0,
+                action_type="wait",
+                payload={"seconds": 1.0},
+                command_payloads=(),
+            ),
+            make_playback_event("/step2", 2.0, 3.0),
+            make_playback_event(
+                "",
+                3.0,
+                3.0,
+                action_type="screenshot",
+                payload={"name": "coop"},
+                command_payloads=(),
+            ),
         ),
     )
     beta_log = PlaybackLog(
         script_description="Beta Coop",
-        events=(make_playback_event("/assist", 0.0, 0.5),),
+        events=(
+            make_playback_event("/assist", 0.0, 0.5),
+            make_playback_event(
+                "",
+                0.5,
+                1.0,
+                action_type="wait",
+                payload={"seconds": 0.5},
+                command_payloads=(),
+            ),
+            make_playback_event(
+                "",
+                1.0,
+                1.0,
+                action_type="screenshot",
+                payload={"name": "beta"},
+                command_payloads=(),
+            ),
+        ),
     )
 
     alpha_success = TestRunResult(
         script=BotScript(description="Alpha Success"),
-        client_results=(ClientRunResult(client_name="alpha", log=alpha_log_one),),
+        client_results=(
+            ClientRunResult(
+                client_name="alpha",
+                log=alpha_log_one,
+                screenshots=(Path("alpha-one.png"),),
+            ),
+        ),
         duration=2.0,
     )
     alpha_failure = TestRunResult(
@@ -809,8 +933,16 @@ def test_orchestrator_summarise_per_client_collects_log_metrics():
     cooperative_success = TestRunResult(
         script=BotScript(description="Coop"),
         client_results=(
-            ClientRunResult(client_name="alpha", log=alpha_log_two),
-            ClientRunResult(client_name="beta", log=beta_log),
+            ClientRunResult(
+                client_name="alpha",
+                log=alpha_log_two,
+                screenshots=(Path("alpha-coop.png"),),
+            ),
+            ClientRunResult(
+                client_name="beta",
+                log=beta_log,
+                screenshots=(Path("beta-coop.png"),),
+            ),
         ),
         duration=3.0,
     )
@@ -829,9 +961,9 @@ def test_orchestrator_summarise_per_client_collects_log_metrics():
     assert alpha_stats.total_commands == 3
     assert alpha_stats.average_commands == pytest.approx(1.5)
     assert alpha_stats.median_commands == pytest.approx(1.5)
-    assert alpha_stats.total_log_duration == pytest.approx(3.0)
-    assert alpha_stats.average_log_duration == pytest.approx(1.5)
-    assert alpha_stats.median_log_duration == pytest.approx(1.5)
+    assert alpha_stats.total_log_duration == pytest.approx(4.0)
+    assert alpha_stats.average_log_duration == pytest.approx(2.0)
+    assert alpha_stats.median_log_duration == pytest.approx(2.0)
     assert alpha_stats.last_status == "SUCCESS"
     assert alpha_stats.unique_commands == 3
     assert alpha_stats.command_usage == {"/hello": 1, "/step1": 1, "/step2": 1}
@@ -840,18 +972,32 @@ def test_orchestrator_summarise_per_client_collects_log_metrics():
         ("/step1", 1),
         ("/step2", 1),
     )
+    assert alpha_stats.total_actions == 5
+    assert alpha_stats.action_types == {"command": 3, "screenshot": 1, "wait": 1}
+    assert alpha_stats.screenshot_actions == 1
+    assert alpha_stats.captured_screenshots == 2
+    assert alpha_stats.total_wait_time == pytest.approx(1.0)
+    assert alpha_stats.average_actions == pytest.approx(2.5)
+    assert alpha_stats.median_actions == pytest.approx(2.5)
 
     beta_stats = summaries["beta"]
     assert beta_stats.total_runs == 1
     assert beta_stats.successful_runs == 1
     assert beta_stats.runs_with_logs == 1
     assert beta_stats.total_commands == 1
-    assert beta_stats.average_log_duration == pytest.approx(0.5)
+    assert beta_stats.average_log_duration == pytest.approx(1.0)
     assert beta_stats.median_commands == pytest.approx(1.0)
-    assert beta_stats.median_log_duration == pytest.approx(0.5)
+    assert beta_stats.median_log_duration == pytest.approx(1.0)
     assert beta_stats.unique_commands == 1
     assert beta_stats.command_usage == {"/assist": 1}
     assert beta_stats.top_commands == (("/assist", 1),)
+    assert beta_stats.total_actions == 3
+    assert beta_stats.action_types == {"command": 1, "screenshot": 1, "wait": 1}
+    assert beta_stats.screenshot_actions == 1
+    assert beta_stats.captured_screenshots == 1
+    assert beta_stats.total_wait_time == pytest.approx(0.5)
+    assert beta_stats.average_actions == pytest.approx(3.0)
+    assert beta_stats.median_actions == pytest.approx(3.0)
 
 
 def test_orchestrator_summarise_per_tag_groups_runs():
@@ -865,8 +1011,17 @@ def test_orchestrator_summarise_per_tag_groups_runs():
                     events=(
                         make_playback_event("/enter", 0.0, 1.0),
                         make_playback_event("/loot", 1.0, 2.0),
+                        make_playback_event(
+                            "",
+                            2.0,
+                            2.0,
+                            action_type="screenshot",
+                            payload={"name": "loot"},
+                            command_payloads=(),
+                        ),
                     ),
                 ),
+                screenshots=(Path("heist-success.png"),),
             ),
         ),
         tags=("smoke", "p1"),
@@ -895,8 +1050,19 @@ def test_orchestrator_summarise_per_tag_groups_runs():
                 client_name="beta",
                 log=PlaybackLog(
                     script_description="Regression",
-                    events=(make_playback_event("/deploy", 0.0, 1.5),),
+                    events=(
+                        make_playback_event("/deploy", 0.0, 1.5),
+                        make_playback_event(
+                            "",
+                            1.5,
+                            2.0,
+                            action_type="wait",
+                            payload={"seconds": 0.5},
+                            command_payloads=(),
+                        ),
+                    ),
                 ),
+                screenshots=(Path("regression.png"),),
             ),
         ),
         tags=("p1",),
@@ -926,6 +1092,11 @@ def test_orchestrator_summarise_per_tag_groups_runs():
     assert smoke_stats.unique_commands == 2
     assert smoke_stats.command_usage == {"/enter": 2, "/loot": 1}
     assert smoke_stats.top_commands[0] == ("/enter", 2)
+    assert smoke_stats.total_actions == 4
+    assert smoke_stats.action_types == {"command": 3, "screenshot": 1}
+    assert smoke_stats.screenshot_actions == 1
+    assert smoke_stats.captured_screenshots == 1
+    assert smoke_stats.total_wait_time == pytest.approx(0.0)
 
     p1_stats = summaries["p1"]
     assert p1_stats.total_runs == 2
@@ -944,3 +1115,8 @@ def test_orchestrator_summarise_per_tag_groups_runs():
     assert p1_stats.unique_commands == 3
     assert p1_stats.command_usage == {"/deploy": 1, "/enter": 1, "/loot": 1}
     assert p1_stats.top_commands[0] == ("/deploy", 1)
+    assert p1_stats.total_actions == 5
+    assert p1_stats.action_types == {"command": 3, "screenshot": 1, "wait": 1}
+    assert p1_stats.screenshot_actions == 1
+    assert p1_stats.captured_screenshots == 2
+    assert p1_stats.total_wait_time == pytest.approx(0.5)

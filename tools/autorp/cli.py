@@ -673,6 +673,28 @@ def main(argv: list[str] | None = None) -> Path:
                         f"{command} ({count})" for command, count in stats.top_commands
                     )
                     print(f"   najczęstsze komendy: {top_preview}")
+            if stats.total_actions:
+                action_line = f"   akcje: łącznie {stats.total_actions}"
+                if stats.screenshot_actions:
+                    action_line += f", screenshoty {stats.screenshot_actions}"
+                if stats.captured_screenshots:
+                    action_line += (
+                        f", zapisane pliki {stats.captured_screenshots}"
+                    )
+                print(action_line)
+                action_breakdown = sorted(
+                    stats.action_types.items(), key=lambda item: (-item[1], item[0])
+                )
+                if action_breakdown:
+                    action_preview = ", ".join(
+                        f"{action} ({count})" for action, count in action_breakdown[:5]
+                    )
+                    print(f"   najczęstsze akcje: {action_preview}")
+            if stats.total_wait_time > 0:
+                print(
+                    "   łączny czas oczekiwania: "
+                    f"{stats.total_wait_time:.2f}s"
+                )
             if stats.failure_categories:
                 details = ", ".join(
                     f"{category}: {count}" for category, count in sorted(stats.failure_categories.items())
@@ -726,6 +748,35 @@ def main(argv: list[str] | None = None) -> Path:
                                 for command, count in summary.top_commands
                             )
                             print(f"         najczęstsze: {scenario_top}")
+                    if summary.total_actions:
+                        action_line = (
+                            "         "
+                            f"akcje: łącznie {summary.total_actions}"
+                        )
+                        if summary.screenshot_actions:
+                            action_line += (
+                                f", screenshoty {summary.screenshot_actions}"
+                            )
+                        if summary.captured_screenshots:
+                            action_line += (
+                                f", zapisane pliki {summary.captured_screenshots}"
+                            )
+                        print(action_line)
+                        action_breakdown = sorted(
+                            summary.action_types.items(),
+                            key=lambda item: (-item[1], item[0]),
+                        )
+                        if action_breakdown:
+                            action_preview = ", ".join(
+                                f"{action} ({count})"
+                                for action, count in action_breakdown[:5]
+                            )
+                            print(f"         najczęstsze akcje: {action_preview}")
+                    if summary.total_wait_time > 0:
+                        print(
+                            "         "
+                            f"czas oczekiwania: {summary.total_wait_time:.2f}s"
+                        )
 
             if client_stats:
                 print("   statystyki klientów:")
@@ -759,6 +810,45 @@ def main(argv: list[str] | None = None) -> Path:
                                 for command, count in summary.top_commands
                             )
                             print(f"         najczęstsze: {top_line}")
+                    if summary.total_actions:
+                        avg_actions = (
+                            f"{summary.average_actions:.1f}"
+                            if summary.average_actions is not None
+                            else "-"
+                        )
+                        action_line = (
+                            "         "
+                            f"akcje: łącznie {summary.total_actions}, średnio {avg_actions} na log"
+                        )
+                        if summary.median_actions is not None:
+                            action_line += f", mediana {summary.median_actions:.1f}"
+                        print(action_line)
+                        if summary.screenshot_actions or summary.captured_screenshots:
+                            details: list[str] = []
+                            if summary.screenshot_actions:
+                                details.append(
+                                    f"screenshoty {summary.screenshot_actions}"
+                                )
+                            if summary.captured_screenshots:
+                                details.append(
+                                    f"zapisane pliki {summary.captured_screenshots}"
+                                )
+                            print("         " + ", ".join(details))
+                        action_breakdown = sorted(
+                            summary.action_types.items(),
+                            key=lambda item: (-item[1], item[0]),
+                        )
+                        if action_breakdown:
+                            action_preview = ", ".join(
+                                f"{action} ({count})"
+                                for action, count in action_breakdown[:5]
+                            )
+                            print(f"         najczęstsze akcje: {action_preview}")
+                    if summary.total_wait_time > 0:
+                        print(
+                            "         "
+                            f"czas oczekiwania: {summary.total_wait_time:.2f}s"
+                        )
                     if summary.average_log_duration is not None:
                         log_line = (
                             "         "
@@ -813,6 +903,35 @@ def main(argv: list[str] | None = None) -> Path:
                                 for command, count in summary.top_commands
                             )
                             print(f"         najczęstsze: {top_preview}")
+                    if summary.total_actions:
+                        action_line = (
+                            "         "
+                            f"akcje: łącznie {summary.total_actions}"
+                        )
+                        if summary.screenshot_actions:
+                            action_line += (
+                                f", screenshoty {summary.screenshot_actions}"
+                            )
+                        if summary.captured_screenshots:
+                            action_line += (
+                                f", zapisane pliki {summary.captured_screenshots}"
+                            )
+                        print(action_line)
+                        action_breakdown = sorted(
+                            summary.action_types.items(),
+                            key=lambda item: (-item[1], item[0]),
+                        )
+                        if action_breakdown:
+                            action_preview = ", ".join(
+                                f"{action} ({count})"
+                                for action, count in action_breakdown[:5]
+                            )
+                            print(f"         najczęstsze akcje: {action_preview}")
+                    if summary.total_wait_time > 0:
+                        print(
+                            "         "
+                            f"czas oczekiwania: {summary.total_wait_time:.2f}s"
+                        )
 
             if args.bot_report_json is not None:
                 report_path = args.bot_report_json

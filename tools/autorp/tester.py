@@ -371,6 +371,11 @@ class SuiteStatistics:
     unique_commands: int
     top_commands: tuple[tuple[str, int], ...]
     command_usage: dict[str, int]
+    total_actions: int
+    action_types: dict[str, int]
+    screenshot_actions: int
+    captured_screenshots: int
+    total_wait_time: float
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -395,6 +400,11 @@ class SuiteStatistics:
                 for command, count in self.top_commands
             ],
             "command_usage": dict(self.command_usage),
+            "total_actions": self.total_actions,
+            "action_types": dict(self.action_types),
+            "screenshot_actions": self.screenshot_actions,
+            "captured_screenshots": self.captured_screenshots,
+            "total_wait_time": self.total_wait_time,
         }
 
 
@@ -418,6 +428,11 @@ class ScenarioStatistics:
     unique_commands: int
     top_commands: tuple[tuple[str, int], ...]
     command_usage: dict[str, int]
+    total_actions: int
+    action_types: dict[str, int]
+    screenshot_actions: int
+    captured_screenshots: int
+    total_wait_time: float
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -440,6 +455,11 @@ class ScenarioStatistics:
                 for command, count in self.top_commands
             ],
             "command_usage": dict(self.command_usage),
+            "total_actions": self.total_actions,
+            "action_types": dict(self.action_types),
+            "screenshot_actions": self.screenshot_actions,
+            "captured_screenshots": self.captured_screenshots,
+            "total_wait_time": self.total_wait_time,
         }
 
 
@@ -462,6 +482,13 @@ class ClientStatistics:
     unique_commands: int
     top_commands: tuple[tuple[str, int], ...]
     command_usage: dict[str, int]
+    total_actions: int
+    average_actions: float | None
+    median_actions: float | None
+    action_types: dict[str, int]
+    screenshot_actions: int
+    captured_screenshots: int
+    total_wait_time: float
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -483,6 +510,13 @@ class ClientStatistics:
                 for command, count in self.top_commands
             ],
             "command_usage": dict(self.command_usage),
+            "total_actions": self.total_actions,
+            "average_actions": self.average_actions,
+            "median_actions": self.median_actions,
+            "action_types": dict(self.action_types),
+            "screenshot_actions": self.screenshot_actions,
+            "captured_screenshots": self.captured_screenshots,
+            "total_wait_time": self.total_wait_time,
         }
 
 
@@ -507,6 +541,11 @@ class TagStatistics:
     unique_commands: int
     top_commands: tuple[tuple[str, int], ...]
     command_usage: dict[str, int]
+    total_actions: int
+    action_types: dict[str, int]
+    screenshot_actions: int
+    captured_screenshots: int
+    total_wait_time: float
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -522,7 +561,7 @@ class TagStatistics:
             "p90_duration": self.p90_duration,
             "last_status": self.last_status,
             "failure_categories": dict(self.failure_categories),
-            "scenarios": dict(self.scenario_counts),
+            "scenario_counts": dict(self.scenario_counts),
             "total_commands": self.total_commands,
             "unique_commands": self.unique_commands,
             "top_commands": [
@@ -530,6 +569,11 @@ class TagStatistics:
                 for command, count in self.top_commands
             ],
             "command_usage": dict(self.command_usage),
+            "total_actions": self.total_actions,
+            "action_types": dict(self.action_types),
+            "screenshot_actions": self.screenshot_actions,
+            "captured_screenshots": self.captured_screenshots,
+            "total_wait_time": self.total_wait_time,
         }
 
 
@@ -1194,6 +1238,25 @@ class TestOrchestrator:
         return total_commands, unique_commands, ordered_usage, top_commands
 
     @staticmethod
+    def _action_summary(
+        logs: Iterable[PlaybackLog],
+    ) -> tuple[int, dict[str, int], int, float]:
+        counter: Counter[str] = Counter()
+        screenshot_actions = 0
+        total_wait_time = 0.0
+        for log in logs:
+            for event in log.events:
+                action_type = event.action.type
+                counter[action_type] += 1
+                if action_type == "screenshot":
+                    screenshot_actions += 1
+                if action_type == "wait":
+                    total_wait_time += float(event.duration or 0.0)
+        total_actions = int(sum(counter.values()))
+        action_types = dict(sorted(counter.items()))
+        return total_actions, action_types, screenshot_actions, float(total_wait_time)
+
+    @staticmethod
     def summarise_results(results: Sequence[TestRunResult]) -> SuiteStatistics:
         """Compute aggregate statistics for a collection of test runs."""
 
@@ -1234,6 +1297,17 @@ class TestOrchestrator:
             command_usage,
             top_commands,
         ) = TestOrchestrator._command_summary(all_logs)
+        (
+            total_actions,
+            action_types,
+            screenshot_actions,
+            total_wait_time,
+        ) = TestOrchestrator._action_summary(all_logs)
+        captured_screenshots = sum(
+            len(client.screenshots)
+            for result in results
+            for client in result.client_results
+        )
         return SuiteStatistics(
             total_runs=total_runs,
             successful_runs=successful_runs,
@@ -1253,6 +1327,11 @@ class TestOrchestrator:
             unique_commands=unique_commands,
             top_commands=top_commands,
             command_usage=command_usage,
+            total_actions=total_actions,
+            action_types=action_types,
+            screenshot_actions=screenshot_actions,
+            captured_screenshots=captured_screenshots,
+            total_wait_time=total_wait_time,
         )
 
     @staticmethod
@@ -1297,6 +1376,17 @@ class TestOrchestrator:
                 command_usage,
                 top_commands,
             ) = TestOrchestrator._command_summary(logs)
+            (
+                total_actions,
+                action_types,
+                screenshot_actions,
+                total_wait_time,
+            ) = TestOrchestrator._action_summary(logs)
+            captured_screenshots = sum(
+                len(client.screenshots)
+                for run in runs
+                for client in run.client_results
+            )
             for run in runs:
                 for failure in run.failures:
                     category_counts[failure.category] += 1
@@ -1317,6 +1407,11 @@ class TestOrchestrator:
                 unique_commands=unique_commands,
                 top_commands=top_commands,
                 command_usage=command_usage,
+                total_actions=total_actions,
+                action_types=action_types,
+                screenshot_actions=screenshot_actions,
+                captured_screenshots=captured_screenshots,
+                total_wait_time=total_wait_time,
             )
         return summaries
 
@@ -1339,15 +1434,27 @@ class TestOrchestrator:
             runs_with_logs = sum(1 for _, client in entries if client.log is not None)
             logs = [client.log for _, client in entries if client.log is not None]
             command_counts = [float(log.command_count()) for log in logs]
-            total_commands = int(sum(command_counts))
-            median_commands = float(statistics.median(command_counts)) if command_counts else None
-            average_commands = (total_commands / runs_with_logs) if runs_with_logs else None
             (
-                aggregated_commands,
+                total_commands,
                 unique_commands,
                 command_usage,
                 top_commands,
             ) = TestOrchestrator._command_summary(logs)
+            median_commands = float(statistics.median(command_counts)) if command_counts else None
+            average_commands = (total_commands / runs_with_logs) if runs_with_logs else None
+            (
+                total_actions,
+                action_types,
+                screenshot_actions,
+                total_wait_time,
+            ) = TestOrchestrator._action_summary(logs)
+            action_event_counts = [len(log.events) for log in logs]
+            median_actions = (
+                float(statistics.median(action_event_counts))
+                if action_event_counts
+                else None
+            )
+            average_actions = (total_actions / runs_with_logs) if runs_with_logs else None
             durations = [float(log.total_duration()) for log in logs]
             (
                 total_log_duration,
@@ -1357,13 +1464,16 @@ class TestOrchestrator:
                 _shortest_log,
                 _longest_log,
             ) = TestOrchestrator._duration_statistics(durations)
+            captured_screenshots = sum(
+                len(client.screenshots) for _, client in entries
+            )
             summaries[name] = ClientStatistics(
                 name=name,
                 total_runs=total_runs,
                 successful_runs=successful_runs,
                 failed_runs=total_runs - successful_runs,
                 runs_with_logs=runs_with_logs,
-                total_commands=aggregated_commands,
+                total_commands=total_commands,
                 average_commands=average_commands,
                 median_commands=median_commands,
                 total_log_duration=total_log_duration,
@@ -1373,6 +1483,13 @@ class TestOrchestrator:
                 unique_commands=unique_commands,
                 top_commands=top_commands,
                 command_usage=command_usage,
+                total_actions=total_actions,
+                average_actions=average_actions,
+                median_actions=median_actions,
+                action_types=action_types,
+                screenshot_actions=screenshot_actions,
+                captured_screenshots=captured_screenshots,
+                total_wait_time=total_wait_time,
             )
         return summaries
 
@@ -1419,6 +1536,17 @@ class TestOrchestrator:
                 command_usage,
                 top_commands,
             ) = TestOrchestrator._command_summary(logs)
+            (
+                total_actions,
+                action_types,
+                screenshot_actions,
+                total_wait_time,
+            ) = TestOrchestrator._action_summary(logs)
+            captured_screenshots = sum(
+                len(client.screenshots)
+                for run in runs
+                for client in run.client_results
+            )
             for run in runs:
                 scenario_description = (run.script.description or "").strip() or "scenario"
                 scenario_counts[scenario_description] += 1
@@ -1442,6 +1570,11 @@ class TestOrchestrator:
                 unique_commands=unique_commands,
                 top_commands=top_commands,
                 command_usage=command_usage,
+                total_actions=total_actions,
+                action_types=action_types,
+                screenshot_actions=screenshot_actions,
+                captured_screenshots=captured_screenshots,
+                total_wait_time=total_wait_time,
             )
         return summaries
 
