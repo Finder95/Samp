@@ -18,12 +18,18 @@ from tools.autorp.tester import (
     BotRunContext,
     BotScript,
     ClientLogExpectation,
+    ClientLogExpectationResult,
     ClientLogMonitor,
     ClientLogExportRequest,
-    TestOrchestrator,
+    ClientRunResult,
+    LogExpectationResult,
+    RunFailure,
+    RunAssertionResult,
+    RunAssertionRule,
     ServerLogExpectation,
     ServerLogMonitor,
-    RunAssertionRule,
+    TestOrchestrator,
+    TestRunResult,
 )
 
 
@@ -618,3 +624,45 @@ def test_server_log_expectation_counts(tmp_path):
         handle.write("Player 42 joined\n")
     regex_matches = monitor.wait_for_expectation(regex_expectation, timeout=0.2)
     assert regex_matches == 1
+
+
+def test_orchestrator_summarise_results_compiles_statistics():
+    base_script = BotScript(description="Summary Demo")
+    successful = TestRunResult(
+        script=base_script,
+        client_results=(ClientRunResult(client_name="alpha", log=None),),
+        duration=2.5,
+        assertions=(
+            RunAssertionResult(name="duration", passed=True, actual=2.5, expected={}),
+        ),
+    )
+    failing = TestRunResult(
+        script=BotScript(description="Failing"),
+        client_results=(ClientRunResult(client_name="beta", log=None),),
+        log_expectations=(LogExpectationResult(phrase="ready", matched=False),),
+        client_log_expectations=(
+            ClientLogExpectationResult(
+                client_name="beta", log_name="chat", phrase="connected", matched=False
+            ),
+        ),
+        failures=(RunFailure(category="assertion", subject="duration", message="too slow"),),
+        assertions=(
+            RunAssertionResult(
+                name="duration", passed=False, actual=10.0, expected={"max": 5.0}, message="too slow"
+            ),
+        ),
+        duration=5.0,
+    )
+
+    stats = TestOrchestrator.summarise_results([successful, failing])
+    assert stats.total_runs == 2
+    assert stats.successful_runs == 1
+    assert stats.failed_runs == 1
+    assert stats.total_duration == 7.5
+    assert stats.average_duration == 3.75
+    assert stats.shortest_duration == 2.5
+    assert stats.longest_duration == 5.0
+    assert stats.assertion_failures == 1
+    assert stats.log_expectation_failures == 1
+    assert stats.client_log_expectation_failures == 1
+    assert stats.failure_categories == {"assertion": 1}

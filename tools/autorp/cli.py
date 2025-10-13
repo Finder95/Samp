@@ -635,22 +635,29 @@ def main(argv: list[str] | None = None) -> Path:
                     )
                 print("---")
 
+            stats = TestOrchestrator.summarise_results(results)
+            print(
+                "Podsumowanie: "
+                f"{stats.successful_runs}/{stats.total_runs} scenariuszy zakończonych sukcesem"
+            )
+            if stats.average_duration is not None:
+                print(
+                    "   czasy: średni "
+                    f"{stats.average_duration:.2f}s, najkrótszy "
+                    f"{stats.shortest_duration:.2f}s, najdłuższy {stats.longest_duration:.2f}s"
+                )
+            if stats.failure_categories:
+                details = ", ".join(
+                    f"{category}: {count}" for category, count in sorted(stats.failure_categories.items())
+                )
+                print(f"   kategorie błędów: {details}")
+
             if args.bot_report_json is not None:
                 report_path = args.bot_report_json
                 if not report_path.is_absolute():
                     report_path = package_root / report_path
                 report_path.parent.mkdir(parents=True, exist_ok=True)
-                summary = {
-                    "total": len(results),
-                    "passed": sum(1 for entry in results if entry.is_successful()),
-                    "failed": sum(1 for entry in results if not entry.is_successful()),
-                    "assertion_failures": sum(
-                        1
-                        for entry in report_entries
-                        for assertion in entry.get("assertions", [])
-                        if not assertion.get("passed")
-                    ),
-                }
+                summary = stats.as_dict()
                 payload = {
                     "generated_gamemode": str(generated_path),
                     "package_dir": str(package_dir),

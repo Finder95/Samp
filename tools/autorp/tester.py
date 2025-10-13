@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from collections import Counter
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 import re
@@ -343,6 +344,38 @@ class TestRunResult:
 
     def status_label(self) -> str:
         return "SUCCESS" if self.is_successful() else "FAILED"
+
+
+@dataclass(slots=True)
+class SuiteStatistics:
+    """Aggregate view of a batch of orchestrated test runs."""
+
+    total_runs: int
+    successful_runs: int
+    failed_runs: int
+    total_duration: float
+    average_duration: float | None
+    shortest_duration: float | None
+    longest_duration: float | None
+    assertion_failures: int
+    log_expectation_failures: int
+    client_log_expectation_failures: int
+    failure_categories: dict[str, int]
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "total": self.total_runs,
+            "passed": self.successful_runs,
+            "failed": self.failed_runs,
+            "total_duration": self.total_duration,
+            "average_duration": self.average_duration,
+            "shortest_duration": self.shortest_duration,
+            "longest_duration": self.longest_duration,
+            "assertion_failures": self.assertion_failures,
+            "log_expectation_failures": self.log_expectation_failures,
+            "client_log_expectation_failures": self.client_log_expectation_failures,
+            "failure_categories": dict(self.failure_categories),
+        }
 
 
 @dataclass(slots=True)
@@ -946,6 +979,44 @@ class TestOrchestrator:
             assertions=assertion_results,
         )
 
+    @staticmethod
+    def summarise_results(results: Sequence[TestRunResult]) -> SuiteStatistics:
+        """Compute aggregate statistics for a collection of test runs."""
+
+        total_runs = len(results)
+        successful_runs = sum(1 for result in results if result.is_successful())
+        durations = [result.duration for result in results if result.duration is not None]
+        total_duration = float(sum(durations)) if durations else 0.0
+        shortest_duration = min(durations) if durations else None
+        longest_duration = max(durations) if durations else None
+        average_duration = (total_duration / len(durations)) if durations else None
+        assertion_failures = sum(
+            1 for result in results for assertion in result.assertions if not assertion.passed
+        )
+        log_expectation_failures = sum(
+            1 for result in results if not result.logs_satisfied()
+        )
+        client_log_expectation_failures = sum(
+            1 for result in results if not result.client_logs_satisfied()
+        )
+        category_counts: Counter[str] = Counter()
+        for result in results:
+            for failure in result.failures:
+                category_counts[failure.category] += 1
+        return SuiteStatistics(
+            total_runs=total_runs,
+            successful_runs=successful_runs,
+            failed_runs=total_runs - successful_runs,
+            total_duration=total_duration,
+            average_duration=average_duration,
+            shortest_duration=shortest_duration,
+            longest_duration=longest_duration,
+            assertion_failures=assertion_failures,
+            log_expectation_failures=log_expectation_failures,
+            client_log_expectation_failures=client_log_expectation_failures,
+            failure_categories=dict(category_counts),
+        )
+
     def run_suite(
         self,
         runs: Sequence[BotRunContext],
@@ -1001,6 +1072,8 @@ class TestOrchestrator:
 
 
 TestOrchestrator.__test__ = False  # type: ignore[attr-defined]
+TestRunResult.__test__ = False  # type: ignore[attr-defined]
+SuiteStatistics.__test__ = False  # type: ignore[attr-defined]
 
 
 __all__ = [
@@ -1020,6 +1093,7 @@ __all__ = [
     "ClientLogExportResult",
     "ClientRunResult",
     "TestRunResult",
+    "SuiteStatistics",
     "BotRunContext",
     "RunAssertionRule",
     "RunAssertionResult",
