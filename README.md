@@ -98,6 +98,21 @@ liczbę iteracji i odstępów między nimi. Dodatkowo można aktywować zbierani
 oraz czy zapisać cały plik czy jedynie przyrost z danego przebiegu. Przykładowa konfiguracja
 znajduje się w `configs/sample_config.json`.
 
+Scenariusze botów mogą korzystać z makr (`bot_macros` oraz lokalnych `macros` w obrębie
+`bot_scenarios`), które pozwalają wielokrotnie wykorzystywać zestawy kroków z parametrami i
+podstawianiem zmiennych `{{variable}}` w treści akcji. Wartości zmiennych pochodzą z sekcji
+`bot_variables`, pól `variables` scenariuszy oraz – opcjonalnie – z parametru CLI
+`--bot-var KEY=VALUE`, dzięki czemu zestawy testów można łatwo konfigurować bez edycji pliku
+JSON. Makra są rozwijane przed generowaniem skryptów, więc gotowe scenariusze zachowują pełną
+kompatybilność z istniejącym translaterem akcji.
+
+Oczekiwania logów serwera mogą być teraz bogatsze niż pojedyncze ciągi znaków. W definicjach
+`expect_server_logs` dopuszczalne jest wskazanie liczby wymaganych wystąpień (`occurrences`),
+czasu oczekiwania (`timeout`), sposobu dopasowania (`match_type` ustawione na `substring` lub
+`regex`) oraz czułości na wielkość liter (`case_sensitive`). `ServerLogMonitor` raportuje liczbę
+znalezionych dopasowań, co umożliwia precyzyjne walidowanie dynamicznych wydarzeń po stronie
+serwera i zapisywanie fragmentów logu w artefaktach przebiegu.
+
 Moduł `tools.autorp.bots` zawiera gotowe implementacje klientów:
 
 - `WineSampClient` – uruchamia prawdziwego klienta SA-MP przez Wine (z obsługą dry-run,
@@ -128,7 +143,13 @@ i iteracji, a także czas trwania przebiegu. Jeśli włączono rejestrowanie, wy
 niepowodzeń (`RunFailure`) pogrupowanych według kategorii (klient, log serwera, log klienta).
 Orkiestrator wspiera wielokrotne próby (`max_retries`), okresy wyciszenia przed kolejną próbą
 (`grace_period`), tagowanie przebiegów oraz przerwanie całej suity po pierwszym błędzie
-(`fail_fast`).
+(`fail_fast`). Dodatkowo każdy przebieg można uzupełnić o własne asercje i metryki – sekcja
+`assertions` w definicji `bot_automation.runs` pozwala kontrolować łączny czas trwania
+(`total_duration`), czas i liczbę komend pojedynczych klientów (`client_duration`,
+`command_count`), wymagania dotyczące logów (`require_log`, `log_presence`) oraz liczbę
+zebranych zrzutów ekranu (`screenshot_count`). Parametry `min`, `max`, `equals`, `expected`,
+`message` i `description` pomagają precyzyjnie opisać oczekiwania, a wynikowe raporty CLI oraz
+plik JSON zawierają informacje o spełnionych i niespełnionych asercjach.
 
 Konfiguracja `bot_automation` może teraz oznaczać przebiegi tagami (`tags`), określać liczbę
 ponowień (`retries`), przerwy między próbami (`grace_period`) oraz włączać/wyłączać pojedyncze
@@ -137,12 +158,15 @@ scenariusze (`enabled`).
 CLI udostępnia dodatkowe przełączniki wspierające pełną automatyzację (`--xdotool-binary`,
 `--bot-focus-window`, `--bot-window-title`, `--bot-record-playback-dir`,
 `--bot-server-log-dir`, `--bot-client-log-dir`, `--bot-only`, `--bot-skip`,
-`--bot-retries`, `--bot-grace-period`, `--bot-fail-fast`), które można łączyć z definicjami
-klientów z konfiguracji (`logs`, `chatlog`, `setup_actions`, `teardown_actions`,
-`expect_client_logs`, `record_playback_dir`, `wait_before`, `wait_after`,
-`collect_server_log`, `server_log_export`, `export_client_logs`, `tags`, `retries`,
-`grace_period`, `fail_fast`). Filtry `--bot-only` oraz `--bot-skip` działają na opisy
-scenariuszy (slug/nazwa) oraz przypisane tagi.
+`--bot-retries`, `--bot-grace-period`, `--bot-fail-fast`, `--bot-var`,
+`--bot-report-json`), które można łączyć z definicjami klientów z konfiguracji (`logs`,
+`chatlog`, `setup_actions`, `teardown_actions`, `expect_client_logs`,
+`record_playback_dir`, `wait_before`, `wait_after`, `collect_server_log`,
+`server_log_export`, `export_client_logs`, `tags`, `retries`, `grace_period`,
+`fail_fast`, `assertions`). Filtry `--bot-only` oraz `--bot-skip` działają na opisy scenariuszy
+(slug/nazwa) oraz przypisane tagi. Parametr `--bot-var` pozwala nadpisać zmienne używane w
+makrach i krokach scenariuszy, a `--bot-report-json` zapisuje podsumowanie wszystkich
+przebiegów (statusy, niepowodzenia, asercje, ścieżki do artefaktów) do wskazanego pliku JSON.
 
 ### Testy
 ```bash

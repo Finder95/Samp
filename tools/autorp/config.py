@@ -4,14 +4,16 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import json
 from pathlib import Path
-from typing import Sequence
+from typing import Mapping, Sequence
 
 from .pawn import escape_pawn_string, indent_lines, sanitize_identifier
-from .scenario import BotScenarioSpec
+from .scenario import BotScenarioSpec, BotScriptMacro
 from .tester import (
     BotRunContext,
     ClientLogExpectation,
     ClientLogExportRequest,
+    RunAssertionRule,
+    ServerLogExpectation,
 )
 
 
@@ -1581,17 +1583,42 @@ class BotScenarioDefinition:
     name: str
     description: str
     steps: Sequence[dict]
+    macros: tuple[BotScriptMacro, ...] = ()
+    variables: dict[str, object] = field(default_factory=dict)
 
     @classmethod
     def from_dict(cls, data: dict) -> "BotScenarioDefinition":
+        macro_defs = tuple(
+            BotScriptMacro.from_dict(entry)
+            for entry in data.get("macros", [])
+            if entry
+        )
+        variables = {str(key): value for key, value in dict(data.get("variables", {})).items()}
         return cls(
             name=data.get("name", data.get("description", "scenario")),
             description=data.get("description", data.get("name", "Scenario")),
             steps=tuple(data.get("steps", [])),
+            macros=macro_defs,
+            variables=variables,
         )
 
-    def to_spec(self) -> BotScenarioSpec:
-        return BotScenarioSpec(name=self.name, description=self.description, steps=self.steps)
+    def to_spec(
+        self,
+        macros: Sequence[BotScriptMacro] | None = None,
+        global_variables: Mapping[str, object] | None = None,
+    ) -> BotScenarioSpec:
+        macro_lookup: dict[str, BotScriptMacro] = {macro.name: macro for macro in macros or ()}
+        for macro in self.macros:
+            macro_lookup[macro.name] = macro
+        variables = dict(global_variables or {})
+        variables.update(self.variables)
+        return BotScenarioSpec(
+            name=self.name,
+            description=self.description,
+            steps=self.steps,
+            macros=macro_lookup,
+            variables=variables,
+        )
 
 
 @dataclass(slots=True)
@@ -1735,12 +1762,141 @@ class BotClientLogExportDefinition:
 
 
 @dataclass(slots=True)
+class BotRunAssertionDefinition:
+    """Definition describing an assertion that validates a bot run."""
+
+    type: str
+    name: str | None = None
+    client: str | None = None
+    min_value: float | None = None
+    max_value: float | None = None
+    equals: float | None = None
+    expected_bool: bool | None = None
+    message: str | None = None
+    description: str | None = None
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "BotRunAssertionDefinition":
+        type_value = data.get("type") or data.get("assertion")
+        if not type_value:
+            raise ValueError("Definicja asercji wymaga pola 'type'")
+
+        def _to_float(value: object | None) -> float | None:
+            if value is None:
+                return None
+            try:
+                return float(value)
+            except (TypeError, ValueError):  # pragma: no cover - defensive
+                return None
+
+        min_value = _to_float(data.get("min") or data.get("min_value"))
+        max_value = _to_float(data.get("max") or data.get("max_value"))
+        equals = _to_float(data.get("equals") or data.get("value"))
+        expected_bool: bool | None
+        if data.get("expected") is not None:
+            expected_bool = bool(data.get("expected"))
+        elif data.get("present") is not None:
+            expected_bool = bool(data.get("present"))
+        elif data.get("required") is not None:
+            expected_bool = bool(data.get("required"))
+        else:
+            expected_bool = None
+        return cls(
+            type=str(type_value),
+            name=(str(data.get("name")) if data.get("name") else None),
+            client=(str(data.get("client")) if data.get("client") else None),
+            min_value=min_value,
+            max_value=max_value,
+            equals=equals,
+            expected_bool=expected_bool,
+            message=(str(data.get("message")) if data.get("message") else None),
+            description=(
+                str(data.get("description")) if data.get("description") else None
+            ),
+        )
+
+    def to_rule(self) -> RunAssertionRule:
+        return RunAssertionRule(
+            type=self.type,
+            name=self.name,
+            client_name=self.client,
+            min_value=self.min_value,
+            max_value=self.max_value,
+            equals=self.equals,
+            expected_bool=self.expected_bool,
+            message=self.message,
+            description=self.description,
+        )
+
+
+@dataclass(slots=True)
+class ServerLogExpectationDefinition:
+    """Definition describing a server log expectation with extended options."""
+
+    phrase: str
+    timeout: float | None = None
+    poll_interval: float | None = None
+    occurrences: int = 1
+    match_type: str = "substring"
+    case_sensitive: bool = True
+    description: str | None = None
+
+    @classmethod
+    def from_dict(
+        cls, data: str | dict[str, object] | ServerLogExpectation
+    ) -> "ServerLogExpectationDefinition":
+        if isinstance(data, ServerLogExpectation):
+            return cls(
+                phrase=data.phrase,
+                timeout=data.timeout,
+                poll_interval=data.poll_interval,
+                occurrences=data.occurrences,
+                match_type=data.match_type,
+                case_sensitive=data.case_sensitive,
+                description=data.description,
+            )
+        if isinstance(data, str):
+            return cls(phrase=data)
+        if not isinstance(data, dict):
+            raise TypeError(f"Nieobsługiwany typ oczekiwania logu serwera: {type(data)!r}")
+        phrase = data.get("phrase") or data.get("value") or data.get("text")
+        if phrase is None:
+            raise ValueError("Oczekiwanie logu serwera wymaga pola 'phrase'")
+        match_type = str(data.get("match_type", data.get("mode", "substring")))
+        poll_interval = data.get("poll_interval")
+        if poll_interval is None and data.get("interval") is not None:
+            poll_interval = data.get("interval")
+        return cls(
+            phrase=str(phrase),
+            timeout=float(data["timeout"]) if data.get("timeout") is not None else None,
+            poll_interval=(float(poll_interval) if poll_interval is not None else None),
+            occurrences=int(data.get("occurrences", data.get("count", 1))),
+            match_type=match_type,
+            case_sensitive=bool(data.get("case_sensitive", data.get("case", True))),
+            description=str(data.get("description")) if data.get("description") else None,
+        )
+
+    def to_expectation(self, default_timeout: float | None = None) -> ServerLogExpectation:
+        timeout = self.timeout if self.timeout is not None else default_timeout
+        poll_interval = self.poll_interval if self.poll_interval is not None else 0.5
+        return ServerLogExpectation(
+            phrase=self.phrase,
+            timeout=timeout,
+            poll_interval=poll_interval,
+            occurrences=max(1, self.occurrences),
+            match_type=self.match_type,
+            case_sensitive=self.case_sensitive,
+            description=self.description,
+        )
+
+
+@dataclass(slots=True)
 class BotRunDefinition:
     """Definition of a suite run connecting scripts and clients."""
 
     scenario: str
     clients: tuple[str, ...] = ()
-    expect_server_logs: tuple[str, ...] = ()
+    expect_server_logs: tuple["ServerLogExpectationDefinition", ...] = ()
     log_timeout: float = 15.0
     iterations: int = 1
     wait_after: float = 0.0
@@ -1755,6 +1911,7 @@ class BotRunDefinition:
     grace_period: float = 0.0
     fail_fast: bool = False
     enabled: bool = True
+    assertions: tuple[BotRunAssertionDefinition, ...] = ()
 
     @classmethod
     def from_dict(cls, data: dict) -> "BotRunDefinition":
@@ -1762,7 +1919,10 @@ class BotRunDefinition:
         if scenario_name is None:
             raise ValueError("Bot run definition wymaga pola 'scenario'")
         clients = tuple(str(name) for name in data.get("clients", []))
-        expect = tuple(str(entry) for entry in data.get("expect_server_logs", []))
+        expect = tuple(
+            ServerLogExpectationDefinition.from_dict(entry)
+            for entry in data.get("expect_server_logs", [])
+        )
         client_log_expectations = tuple(
             BotClientLogExpectationDefinition.from_dict(entry)
             for entry in data.get("expect_client_logs", [])
@@ -1772,6 +1932,10 @@ class BotRunDefinition:
             for entry in data.get("export_client_logs", [])
         )
         tags = tuple(str(tag) for tag in data.get("tags", []))
+        assertions = tuple(
+            BotRunAssertionDefinition.from_dict(entry)
+            for entry in data.get("assertions", [])
+        )
         return cls(
             scenario=str(scenario_name),
             clients=clients,
@@ -1798,6 +1962,7 @@ class BotRunDefinition:
             grace_period=float(data.get("grace_period", data.get("retry_delay", 0.0))),
             fail_fast=bool(data.get("fail_fast", False)),
             enabled=bool(data.get("enabled", data.get("active", True))),
+            assertions=assertions,
         )
 
 
@@ -1808,19 +1973,29 @@ class BotAutomationPlan:
     clients: tuple[BotClientDefinition, ...]
     runs: tuple[BotRunDefinition, ...]
 
-    def contexts(self, scenarios: Sequence[BotScenarioDefinition]) -> list[BotRunContext]:
+    def contexts(
+        self,
+        scenarios: Sequence[BotScenarioDefinition],
+        macros: Sequence[BotScriptMacro] | None = None,
+        global_variables: Mapping[str, object] | None = None,
+    ) -> list[BotRunContext]:
         scenario_lookup = {scenario.name: scenario for scenario in scenarios}
+        macro_defs = tuple(macros or ())
         contexts: list[BotRunContext] = []
         for run in self.runs:
             scenario = scenario_lookup.get(run.scenario)
             if scenario is None:
                 continue
-            script = scenario.to_spec().to_bot_script()
+            spec = scenario.to_spec(macros=macro_defs, global_variables=global_variables)
+            script = spec.to_bot_script()
             contexts.append(
                 BotRunContext(
                     script=script,
                     client_names=run.clients,
-                    expect_server_logs=run.expect_server_logs,
+                    expect_server_logs=tuple(
+                        expectation.to_expectation(default_timeout=run.log_timeout)
+                        for expectation in run.expect_server_logs
+                    ),
                     log_timeout=run.log_timeout,
                     iterations=run.iterations,
                     wait_after=run.wait_after,
@@ -1848,6 +2023,7 @@ class BotAutomationPlan:
                     fail_fast=run.fail_fast,
                     tags=run.tags,
                     enabled=run.enabled,
+                    assertions=tuple(assertion.to_rule() for assertion in run.assertions),
                 )
             )
         return contexts
@@ -1934,6 +2110,8 @@ class GamemodeConfig:
     scenarios: Sequence[BotScenarioDefinition] = field(default_factory=list)
     bot_clients: Sequence[BotClientDefinition] = field(default_factory=list)
     bot_runs: Sequence[BotRunDefinition] = field(default_factory=list)
+    bot_macros: Sequence[BotScriptMacro] = field(default_factory=list)
+    bot_variables: dict[str, object] = field(default_factory=dict)
     properties: Sequence[Property] = field(default_factory=list)
     npcs: Sequence[Npc] = field(default_factory=list)
     events: Sequence[ScheduledEvent] = field(default_factory=list)
@@ -2021,6 +2199,19 @@ class GamemodeConfig:
             BotRunDefinition.from_dict(entry)
             for entry in automation_data.get("runs", automation_data.get("suite", []))
         ]
+        macro_sources = []
+        if data.get("bot_macros"):
+            macro_sources.extend(data.get("bot_macros", []))
+        if automation_data.get("macros"):
+            macro_sources.extend(automation_data.get("macros", []))
+        bot_macros = [
+            BotScriptMacro.from_dict(entry)
+            for entry in macro_sources
+        ]
+        variable_payload = {}
+        variable_payload.update(dict(data.get("bot_variables", {})))
+        variable_payload.update(dict(automation_data.get("variables", {})))
+        bot_variables = {str(key): value for key, value in variable_payload.items()}
         server_settings = ServerSettings(**data.get("server", {}))
         world_settings = WorldSettings(**data.get("world", {}))
         economy = EconomySettings(**data.get("economy", {}))
@@ -2057,6 +2248,8 @@ class GamemodeConfig:
             scenarios=scenarios,
             bot_clients=bot_clients,
             bot_runs=bot_runs,
+            bot_macros=bot_macros,
+            bot_variables=bot_variables,
             server_settings=server_settings,
             world_settings=world_settings,
             economy=economy,
@@ -3136,19 +3329,29 @@ class GamemodeConfig:
         factions = self.faction_lookup()
         return "\n\n".join(event.handler_block(factions) for event in self.events)
 
-    def bot_scripts(self) -> list["BotScript"]:
+    def bot_scripts(
+        self, variable_overrides: Mapping[str, object] | None = None
+    ) -> list["BotScript"]:
         from .tester import BotScript
 
         scripts: list[BotScript] = []
+        variables = dict(self.bot_variables)
+        if variable_overrides:
+            variables.update({str(key): value for key, value in variable_overrides.items()})
+        macros = tuple(self.bot_macros)
         for scenario in self.scenarios:
-            spec = scenario.to_spec()
+            spec = scenario.to_spec(macros=macros, global_variables=variables)
             scripts.append(spec.to_bot_script())
         return scripts
 
-    def write_bot_scripts(self, directory: Path) -> list[Path]:
+    def write_bot_scripts(
+        self,
+        directory: Path,
+        variable_overrides: Mapping[str, object] | None = None,
+    ) -> list[Path]:
         directory.mkdir(parents=True, exist_ok=True)
         paths: list[Path] = []
-        for script in self.bot_scripts():
+        for script in self.bot_scripts(variable_overrides=variable_overrides):
             filename = sanitize_identifier(script.description or "scenario") or "scenario"
             target = directory / f"{filename}.json"
             target.write_text(script.to_json(), encoding="utf-8")
@@ -3164,7 +3367,11 @@ class GamemodeConfig:
         plan = self.bot_automation_plan()
         if plan is None:
             return []
-        return plan.contexts(self.scenarios)
+        return plan.contexts(
+            self.scenarios,
+            macros=self.bot_macros,
+            global_variables=self.bot_variables,
+        )
 
     def server_cfg_content(self) -> str:
         return self.server_settings.to_server_cfg(self.name)

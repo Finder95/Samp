@@ -222,16 +222,41 @@
       "required_job": "Policjant"
     }
   ],
+  "bot_macros": [
+    {
+      "name": "announce_status",
+      "parameters": ["status"],
+      "steps": [
+        {"type": "chat", "message": "Status jednostki: {{status}}"},
+        {"type": "wait", "seconds": 0.5}
+      ]
+    }
+  ],
+  "bot_variables": {
+    "status_code": "S01"
+  },
   "bot_scenarios": [
     {
       "name": "police_patrol",
       "description": "Bot sprawdza dołączenie do policji i teleport",
+      "variables": {"status_code": "P01"},
+      "macros": [
+        {
+          "name": "radio_check",
+          "steps": [
+            {"type": "chat", "message": "Radio sprawne, kod {{status_code}}"}
+          ]
+        }
+      ],
       "steps": [
+        {"type": "macro", "name": "announce_status", "arguments": {"status": "P01"}},
+        {"type": "macro", "name": "radio_check"},
         {"type": "command", "value": "/pomoc"},
         {"type": "chat", "message": "Dzień dobry, rozpoczynam patrol."},
         {"type": "command", "value": "/dolacz_police"},
         {"type": "wait", "seconds": 1.5},
         {"type": "teleport", "x": 1568.2, "y": -1711.4, "z": 13.4},
+        {"type": "command", "value": "/kod {{status_code}}"},
         {"type": "command", "value": "/szpital"}
       ]
     },
@@ -267,11 +292,13 @@
           "hold": 0.05
         },
         {"type": "key_combo", "keys": ["ctrl", "s"], "hold": 0.1},
+        {"type": "chat", "message": "Kod globalny: {{status_code}}"},
         {"type": "screenshot", "name": "client_focus", "path": "Test/screenshots/client_focus.png"}
       ]
     }
   ],
   "bot_automation": {
+    "variables": {"status_code": "AUTO"},
     "clients": [
       {
         "name": "dummy_suite",
@@ -315,7 +342,13 @@
       {
         "scenario": "police_patrol",
         "clients": ["dummy_suite"],
-        "expect_server_logs": ["Player connected"],
+        "expect_server_logs": [
+          {
+            "phrase": "Status jednostki",
+            "occurrences": 1,
+            "timeout": 5.0
+          }
+        ],
         "log_timeout": 5.0,
         "iterations": 1,
         "wait_before": 0.2,
@@ -336,12 +369,38 @@
         "retries": 1,
         "grace_period": 0.5,
         "fail_fast": true,
-        "enabled": true
+        "enabled": true,
+        "assertions": [
+          {
+            "name": "patrol_commands",
+            "type": "command_count",
+            "client": "dummy_suite",
+            "min": 3,
+            "description": "Patrol bot powinien wysłać co najmniej trzy komendy"
+          },
+          {
+            "name": "patrol_duration",
+            "type": "total_duration",
+            "max": 20.0,
+            "message": "Patrol nie może trwać dłużej niż 20s"
+          },
+          {
+            "type": "require_log",
+            "client": "dummy_suite",
+            "description": "Dummy klient musi zwrócić log przebiegu"
+          }
+        ]
       },
       {
         "scenario": "heist_briefing",
         "clients": ["dummy_suite", "wine_suite"],
-        "expect_server_logs": ["[AutoRP]"],
+        "expect_server_logs": [
+          {
+            "phrase": "[AutoRP]",
+            "match_type": "substring",
+            "timeout": 10.0
+          }
+        ],
         "log_timeout": 10.0,
         "iterations": 2,
         "wait_after": 1.0,
@@ -361,7 +420,21 @@
         "retries": 0,
         "grace_period": 0.0,
         "fail_fast": false,
-        "enabled": true
+        "enabled": true,
+        "assertions": [
+          {
+            "type": "command_count",
+            "name": "łączna liczba komend",
+            "min": 5,
+            "description": "Oba boty powinny wygenerować co najmniej pięć komend"
+          },
+          {
+            "type": "screenshot_count",
+            "client": "wine_suite",
+            "min": 1,
+            "description": "Klient Wine zbiera przynajmniej jeden zrzut ekranu"
+          }
+        ]
       },
       {
         "scenario": "client_focus_demo",
@@ -378,7 +451,21 @@
         "retries": 2,
         "grace_period": 0.25,
         "fail_fast": false,
-        "enabled": true
+        "enabled": true,
+        "assertions": [
+          {
+            "type": "client_duration",
+            "client": "wine_suite",
+            "max": 12.0,
+            "description": "Demo okna kończy się w mniej niż 12 sekund"
+          },
+          {
+            "type": "require_log",
+            "client": "wine_suite",
+            "expected": true,
+            "message": "Oczekiwany log playback dla klienta wine"
+          }
+        ]
       }
     ]
   },

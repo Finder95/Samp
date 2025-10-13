@@ -5,7 +5,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from tools.autorp.scenario import BotScenarioSpec, ScenarioStep
+from tools.autorp.scenario import BotScenarioSpec, BotScriptMacro, ScenarioStep
 
 
 def test_scenario_step_normalisation():
@@ -31,3 +31,28 @@ def test_bot_scenario_to_script():
     assert script.commands[0] == "/sluzba"
     assert script.commands[1] == "/pomoc"
     assert any(action["type"] == "wait" for action in script.actions)
+
+
+def test_bot_scenario_macro_expansion():
+    macro = BotScriptMacro(
+        name="announce",
+        parameters=("target",),
+        steps=(
+            {"type": "chat", "message": "Hej {{target}}"},
+            {"type": "wait", "seconds": 0.5},
+        ),
+    )
+    spec = BotScenarioSpec(
+        name="macro",
+        description="Makro",
+        steps=[
+            {"type": "macro", "name": "announce", "arguments": {"target": "Gracz"}},
+            {"type": "command", "value": "status {{state}}"},
+        ],
+        macros={"announce": macro},
+        variables={"state": "online"},
+    )
+    script = spec.to_bot_script()
+    assert script.actions[0]["message"] == "Hej Gracz"
+    assert script.actions[1]["seconds"] == 0.5
+    assert script.actions[2]["command"] == "/status online"

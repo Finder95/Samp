@@ -154,6 +154,11 @@ def test_cli_runs_bot_tests(tmp_path: Path, monkeypatch):
             def wait_for(self, phrase: str, timeout: float = 10.0) -> bool:
                 return True
 
+            def wait_for_expectation(
+                self, expectation, timeout: float | None = None
+            ) -> int:
+                return expectation.occurrences
+
             def collect_since_mark(self, include_full: bool = False) -> str:
                 return ""
 

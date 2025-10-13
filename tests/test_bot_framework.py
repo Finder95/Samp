@@ -23,7 +23,9 @@ from tools.autorp.tester import (
     ClientLogMonitor,
     ClientLogExportRequest,
     TestOrchestrator,
+    ServerLogExpectation,
     ServerLogMonitor,
+    RunAssertionRule,
 )
 
 
@@ -139,6 +141,37 @@ def test_orchestrator_returns_logs(tmp_path):
     assert result.failures == ()
     assert result.attempt_index == 1
     assert result.duration is not None and result.duration >= 0.0
+
+
+def test_orchestrator_assertions_and_failures():
+    transport = BufferedCommandTransport()
+    client = DummyBotClient(name="dummy", transport=transport)
+    orchestrator = TestOrchestrator(clients=[client])
+    script = BotScript(description="Assert", commands=("/hi", "/bye"))
+    ok_result = orchestrator.run(
+        script,
+        server_address="127.0.0.1:7777",
+        assertions=(
+            RunAssertionRule(type="total_duration", max_value=5.0, name="duration"),
+            RunAssertionRule(
+                type="command_count", client_name="dummy", min_value=2, max_value=2
+            ),
+            RunAssertionRule(type="require_log", client_name="dummy"),
+        ),
+    )
+    assert ok_result.is_successful()
+    assert ok_result.assertions
+    assert all(assertion.passed for assertion in ok_result.assertions)
+
+    fail_result = orchestrator.run(
+        script,
+        server_address="127.0.0.1:7777",
+        assertions=(RunAssertionRule(type="command_count", min_value=5, name="too many"),),
+    )
+    assert not fail_result.is_successful()
+    assert fail_result.assertions
+    assert any(not assertion.passed for assertion in fail_result.assertions)
+    assert any(failure.category == "assertion" for failure in fail_result.failures)
 
 
 def test_wine_client_dry_run(tmp_path):
@@ -416,14 +449,37 @@ def test_config_bot_plan_contexts():
         "name": "Demo",
         "description": "Test",
         "author": "QA",
+        "bot_macros": [
+            {
+                "name": "greet",
+                "parameters": ["player"],
+                "steps": [
+                    {"type": "chat", "message": "Witaj {{player}}"},
+                    {"type": "wait", "seconds": 0.2},
+                ],
+            }
+        ],
+        "bot_variables": {"code": "S1"},
         "bot_scenarios": [
             {
                 "name": "simple",
                 "description": "Simple",
-                "steps": ["/hello"],
+                "variables": {"player": "Scenario"},
+                "macros": [
+                    {
+                        "name": "prepare",
+                        "steps": [{"type": "command", "value": "prep"}],
+                    }
+                ],
+                "steps": [
+                    {"type": "macro", "name": "greet", "arguments": {"player": "Tester"}},
+                    {"type": "macro", "name": "prepare"},
+                    {"type": "command", "value": "use {{code}}"},
+                ],
             }
         ],
         "bot_automation": {
+            "variables": {"code": "AUTO"},
             "clients": [
                 {
                     "name": "dummy",
@@ -438,6 +494,13 @@ def test_config_bot_plan_contexts():
                     "scenario": "simple",
                     "clients": ["dummy"],
                     "iterations": 2,
+                    "expect_server_logs": [
+                        {
+                            "phrase": "Tester joined",
+                            "occurrences": 2,
+                            "timeout": 1.5,
+                        }
+                    ],
                     "expect_client_logs": [{"client": "dummy", "phrase": "ready"}],
                     "wait_before": 0.25,
                     "record_playback_dir": "artifacts/playback",
@@ -456,6 +519,20 @@ def test_config_bot_plan_contexts():
                     "grace_period": 0.75,
                     "fail_fast": True,
                     "enabled": True,
+                    "assertions": [
+                        {
+                            "type": "command_count",
+                            "client": "dummy",
+                            "min": 2,
+                            "max": 4,
+                            "name": "dummy commands",
+                        },
+                        {
+                            "type": "total_duration",
+                            "max": 10,
+                            "message": "Scenariusz przekroczył budżet czasowy",
+                        },
+                    ],
                 }
             ],
         },
@@ -464,19 +541,62 @@ def test_config_bot_plan_contexts():
     plan = config.bot_automation_plan()
     assert plan is not None
     assert plan.clients[0].logs[0].name == "custom"
-    contexts = plan.contexts(config.scenarios)
+    contexts = plan.contexts(
+        config.scenarios, macros=config.bot_macros, global_variables=config.bot_variables
+    )
     assert len(contexts) == 1
-    assert contexts[0].client_names == ("dummy",)
-    assert contexts[0].iterations == 2
-    assert contexts[0].client_log_expectations[0].phrase == "ready"
-    assert contexts[0].wait_before == 0.25
-    assert contexts[0].record_playback_dir == Path("artifacts/playback")
-    assert contexts[0].capture_server_log is True
-    assert contexts[0].server_log_export == Path("artifacts/server.log")
-    assert contexts[0].client_log_exports[0].include_full_log is True
-    assert contexts[0].client_log_exports[0].target_path == Path("artifacts/custom.log")
-    assert contexts[0].tags == ("smoke", "patrol")
-    assert contexts[0].max_retries == 2
-    assert contexts[0].grace_period == 0.75
-    assert contexts[0].fail_fast is True
-    assert contexts[0].enabled is True
+    context = contexts[0]
+    assert context.client_names == ("dummy",)
+    assert context.iterations == 2
+    assert context.client_log_expectations[0].phrase == "ready"
+    assert context.wait_before == 0.25
+    assert context.record_playback_dir == Path("artifacts/playback")
+    assert context.capture_server_log is True
+    assert context.server_log_export == Path("artifacts/server.log")
+    assert context.client_log_exports[0].include_full_log is True
+    assert context.client_log_exports[0].target_path == Path("artifacts/custom.log")
+    assert context.tags == ("smoke", "patrol")
+    assert context.max_retries == 2
+    assert context.grace_period == 0.75
+    assert context.fail_fast is True
+    assert context.enabled is True
+    assert context.expect_server_logs[0].phrase == "Tester joined"
+    assert context.expect_server_logs[0].occurrences == 2
+    assert context.expect_server_logs[0].timeout == 1.5
+    assert len(context.assertions) == 2
+    assert context.assertions[0].type == "command_count"
+    assert context.assertions[0].client_name == "dummy"
+    actions = context.script.actions
+    assert actions[0]["message"] == "Witaj Tester"
+    assert actions[1]["type"] == "wait"
+    assert actions[2]["command"] == "/prep"
+    assert actions[3]["command"] == "/use AUTO"
+
+
+def test_server_log_expectation_counts(tmp_path):
+    log_path = tmp_path / "server_log.txt"
+    log_path.write_text("", encoding="utf-8")
+    monitor = ServerLogMonitor(log_path)
+    monitor.mark()
+    expectation = ServerLogExpectation(
+        phrase="connected",
+        occurrences=2,
+        timeout=0.1,
+        poll_interval=0.01,
+        case_sensitive=False,
+    )
+    with log_path.open("a", encoding="utf-8") as handle:
+        handle.write("Player connected\n")
+        handle.write("Another CONNECTED\n")
+    matches = monitor.wait_for_expectation(expectation, timeout=0.2)
+    assert matches == 2
+    monitor.mark()
+    regex_expectation = ServerLogExpectation(
+        phrase=r"Player \d+",
+        match_type="regex",
+        timeout=0.1,
+    )
+    with log_path.open("a", encoding="utf-8") as handle:
+        handle.write("Player 42 joined\n")
+    regex_matches = monitor.wait_for_expectation(regex_expectation, timeout=0.2)
+    assert regex_matches == 1

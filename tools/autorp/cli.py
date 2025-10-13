@@ -132,6 +132,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Pomiń scenariusze zawierające nazwę lub tag podany jako argument",
     )
     parser.add_argument(
+        "--bot-var",
+        action="append",
+        default=[],
+        help="Nadpisz zmienną scenariusza (format NAZWA=WARTOŚĆ, można powtarzać)",
+    )
+    parser.add_argument(
         "--bot-retries",
         type=int,
         default=None,
@@ -147,6 +153,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--bot-fail-fast",
         action="store_true",
         help="Zatrzymaj suite po pierwszym błędzie scenariusza",
+    )
+    parser.add_argument(
+        "--bot-report-json",
+        type=Path,
+        default=None,
+        help="Zapisz raport przebiegów botów do pliku JSON",
     )
     return parser.parse_args(argv)
 
@@ -259,6 +271,18 @@ def main(argv: list[str] | None = None) -> Path:
     config_data = json.loads(args.config.read_text(encoding="utf-8"))
     config = GamemodeConfig.from_dict(config_data)
 
+    variable_overrides: dict[str, object] = {}
+    for raw in args.bot_var or []:
+        if not raw:
+            continue
+        key, sep, value = str(raw).partition("=")
+        key = key.strip()
+        if not key:
+            continue
+        variable_overrides[key] = value.strip() if sep else "true"
+    effective_variables = dict(config.bot_variables)
+    effective_variables.update(variable_overrides)
+
     generator = GamemodeGenerator(template_dir=args.template_dir)
 
     if args.package_dir is not None:
@@ -283,7 +307,9 @@ def main(argv: list[str] | None = None) -> Path:
         print(f"Skompilowano gamemode do: {amx_path}")
 
     if args.bot_scripts_dir is not None:
-        bot_paths = config.write_bot_scripts(args.bot_scripts_dir)
+        bot_paths = config.write_bot_scripts(
+            args.bot_scripts_dir, variable_overrides=effective_variables
+        )
         if bot_paths:
             print("Zapisano scenariusze botów:")
             for path in bot_paths:
@@ -298,8 +324,16 @@ def main(argv: list[str] | None = None) -> Path:
                 "Do uruchomienia testów botów wymagany jest katalog paczki serwerowej"
             )
         plan = config.bot_automation_plan()
-        plan_contexts = plan.contexts(config.scenarios) if plan else []
-        scripts = config.bot_scripts()
+        plan_contexts = (
+            plan.contexts(
+                config.scenarios,
+                macros=config.bot_macros,
+                global_variables=effective_variables,
+            )
+            if plan
+            else []
+        )
+        scripts = config.bot_scripts(variable_overrides=effective_variables)
         if not plan_contexts and not scripts:
             print("Brak scenariuszy botów do uruchomienia")
         else:
@@ -421,6 +455,7 @@ def main(argv: list[str] | None = None) -> Path:
                                 / f"{slug}_{export.client_name}_{export.log_name}.log"
                             )
             registered: dict[str, Path] = {}
+            report_entries: list[dict[str, object]] = []
             for context in contexts:
                 desc = context.script.description or "scenario"
                 if desc not in registered:
@@ -464,10 +499,46 @@ def main(argv: list[str] | None = None) -> Path:
                         )
                 elif result.log_expectations or result.client_log_expectations:
                     print("   ✅ wszystkie oczekiwania spełnione")
+                if result.assertions:
+                    print("   Asercje/metryki:")
+                    for assertion in result.assertions:
+                        icon = "✅" if assertion.passed else "❌"
+                        detail_parts: list[str] = []
+                        if assertion.description:
+                            detail_parts.append(assertion.description)
+                        if assertion.expected:
+                            expected_parts = ", ".join(
+                                f"{key}={value}" for key, value in assertion.expected.items()
+                            )
+                            detail_parts.append(f"oczekiwane: {expected_parts}")
+                        if assertion.actual is not None:
+                            detail_parts.append(f"wartość={assertion.actual}")
+                        if assertion.message:
+                            detail_parts.append(assertion.message)
+                        details = "; ".join(detail_parts)
+                        line = f"   {icon} {assertion.name}"
+                        if details:
+                            line += f": {details}"
+                        print(line)
                 if result.log_expectations:
                     for expectation in result.log_expectations:
-                        status = "OK" if expectation.matched else "NIE ZNALEZIONO"
-                        print(f"   oczekiwanie logu '{expectation.phrase}': {status}")
+                        base = (
+                            f"{expectation.matched_count}/{expectation.required_occurrences}"
+                        )
+                        expectation_status = "OK" if expectation.matched else "NIE"
+                        details: list[str] = [base]
+                        if expectation.match_type != "substring":
+                            details.append(f"tryb={expectation.match_type}")
+                        if not expectation.case_sensitive:
+                            details.append("nocase")
+                        if expectation.timeout is not None:
+                            details.append(f"timeout={expectation.timeout:.1f}s")
+                        if expectation.description:
+                            details.append(expectation.description)
+                        joined_details = ", ".join(details)
+                        print(
+                            f"   oczekiwanie logu '{expectation.phrase}': {expectation_status} ({joined_details})"
+                        )
                 if result.server_log_path is not None:
                     print(f"   zapis logu serwera: {result.server_log_path}")
                 elif result.server_log_excerpt:
@@ -482,7 +553,124 @@ def main(argv: list[str] | None = None) -> Path:
                         elif export.content:
                             lines = len(export.content.splitlines())
                             print(f"   log klienta {label}: {lines} linii (w pamięci)")
+                if args.bot_report_json is not None:
+                    report_entries.append(
+                        {
+                            "description": desc,
+                            "status": status,
+                            "attempt": result.attempt_index,
+                            "iteration": result.iteration_index,
+                            "duration": result.duration,
+                            "clients": [
+                                {
+                                    "name": client_result.client_name,
+                                    "has_log": client_result.log is not None,
+                                    "playback_log": (
+                                        str(client_result.playback_log_path)
+                                        if client_result.playback_log_path is not None
+                                        else None
+                                    ),
+                                    "screenshots": [
+                                        str(path) for path in client_result.screenshots
+                                    ],
+                                }
+                                for client_result in result.client_results
+                            ],
+                            "log_expectations": [
+                                {
+                                    "phrase": expectation.phrase,
+                                    "matched": expectation.matched,
+                                    "matches": expectation.matched_count,
+                                    "required": expectation.required_occurrences,
+                                    "match_type": expectation.match_type,
+                                    "case_sensitive": expectation.case_sensitive,
+                                    "description": expectation.description,
+                                    "timeout": expectation.timeout,
+                                }
+                                for expectation in result.log_expectations
+                            ],
+                            "client_expectations": [
+                                {
+                                    "client": expectation.client_name,
+                                    "log": expectation.log_name,
+                                    "phrase": expectation.phrase,
+                                    "matched": expectation.matched,
+                                }
+                                for expectation in result.client_log_expectations
+                            ],
+                            "failures": [
+                                {
+                                    "category": failure.category,
+                                    "subject": failure.subject,
+                                    "message": failure.message,
+                                }
+                                for failure in result.failures
+                            ],
+                            "assertions": [
+                                {
+                                    "name": assertion.name,
+                                    "passed": assertion.passed,
+                                    "actual": assertion.actual,
+                                    "expected": dict(assertion.expected),
+                                    "message": assertion.message,
+                                    "description": assertion.description,
+                                }
+                                for assertion in result.assertions
+                            ],
+                            "server_log_path": (
+                                str(result.server_log_path)
+                                if result.server_log_path is not None
+                                else None
+                            ),
+                            "server_log_excerpt": (
+                                result.server_log_excerpt
+                                if result.server_log_excerpt and result.server_log_path is None
+                                else None
+                            ),
+                            "client_log_exports": [
+                                {
+                                    "client": export.client_name,
+                                    "log": export.log_name,
+                                    "path": str(export.target_path)
+                                    if export.target_path is not None
+                                    else None,
+                                    "lines": len(export.content.splitlines())
+                                    if export.content
+                                    else 0,
+                                }
+                                for export in result.client_log_exports
+                            ],
+                        }
+                    )
                 print("---")
+
+            if args.bot_report_json is not None:
+                report_path = args.bot_report_json
+                if not report_path.is_absolute():
+                    report_path = package_root / report_path
+                report_path.parent.mkdir(parents=True, exist_ok=True)
+                summary = {
+                    "total": len(results),
+                    "passed": sum(1 for entry in results if entry.is_successful()),
+                    "failed": sum(1 for entry in results if not entry.is_successful()),
+                    "assertion_failures": sum(
+                        1
+                        for entry in report_entries
+                        for assertion in entry.get("assertions", [])
+                        if not assertion.get("passed")
+                    ),
+                }
+                payload = {
+                    "generated_gamemode": str(generated_path),
+                    "package_dir": str(package_dir),
+                    "variables": {key: str(value) for key, value in effective_variables.items()},
+                    "results": report_entries,
+                    "summary": summary,
+                }
+                report_path.write_text(
+                    json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
+                )
+                print(f"Zapisano raport przebiegów botów: {report_path}")
 
     return generated_path
 

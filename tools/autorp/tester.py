@@ -4,10 +4,11 @@ from __future__ import annotations
 import json
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+import re
 from pathlib import Path
 import subprocess
 import time
-from typing import Iterable, Protocol, Sequence
+from typing import Iterable, Mapping, Protocol, Sequence
 
 
 class BotClient(Protocol):
@@ -158,11 +159,63 @@ class PlaybackLog:
 
 
 @dataclass(slots=True)
+class ServerLogExpectation:
+    """Expectation describing phrases or patterns in the server log."""
+
+    phrase: str
+    timeout: float | None = None
+    poll_interval: float = 0.5
+    occurrences: int = 1
+    match_type: str = "substring"
+    case_sensitive: bool = True
+    description: str | None = None
+
+    def _normalised_phrase(self) -> str:
+        return self.phrase if self.case_sensitive else self.phrase.lower()
+
+    def count_matches(self, content: str) -> int:
+        if not content:
+            return 0
+        if self.match_type == "regex":
+            flags = re.MULTILINE
+            if not self.case_sensitive:
+                flags |= re.IGNORECASE
+            pattern = re.compile(self.phrase, flags)
+            return len(pattern.findall(content))
+        haystack = content if self.case_sensitive else content.lower()
+        needle = self._normalised_phrase()
+        if not needle:
+            return 0
+        return haystack.count(needle)
+
+    def with_defaults(
+        self, timeout: float | None = None, poll_interval: float | None = None
+    ) -> "ServerLogExpectation":
+        return ServerLogExpectation(
+            phrase=self.phrase,
+            timeout=self.timeout if self.timeout is not None else timeout,
+            poll_interval=self.poll_interval if self.poll_interval is not None else (
+                poll_interval if poll_interval is not None else 0.5
+            ),
+            occurrences=max(1, self.occurrences),
+            match_type=self.match_type,
+            case_sensitive=self.case_sensitive,
+            description=self.description,
+        )
+
+
+@dataclass(slots=True)
 class LogExpectationResult:
     """Result of waiting for a specific phrase in the server log."""
 
     phrase: str
     matched: bool
+    matched_count: int = 0
+    required_occurrences: int = 1
+    match_type: str = "substring"
+    case_sensitive: bool = True
+    description: str | None = None
+    timeout: float | None = None
 
 
 @dataclass(slots=True)
@@ -226,6 +279,36 @@ class ClientRunResult:
 
 
 @dataclass(slots=True)
+class RunAssertionRule:
+    """Rule describing an assertion to evaluate after a bot run."""
+
+    type: str
+    name: str | None = None
+    client_name: str | None = None
+    min_value: float | None = None
+    max_value: float | None = None
+    equals: float | None = None
+    expected_bool: bool | None = None
+    message: str | None = None
+    description: str | None = None
+
+    def label(self) -> str:
+        return self.name or self.type
+
+
+@dataclass(slots=True)
+class RunAssertionResult:
+    """Outcome of evaluating a post-run assertion rule."""
+
+    name: str
+    passed: bool
+    actual: float | int | bool | None
+    expected: Mapping[str, object]
+    message: str | None = None
+    description: str | None = None
+
+
+@dataclass(slots=True)
 class TestRunResult:
     """Summary of a completed orchestrated run."""
 
@@ -242,6 +325,7 @@ class TestRunResult:
     finished_at: float | None = None
     duration: float | None = None
     failures: tuple[RunFailure, ...] = ()
+    assertions: tuple["RunAssertionResult", ...] = ()
 
     def successful_clients(self) -> list[str]:
         return [result.client_name for result in self.client_results if result.log is not None]
@@ -265,7 +349,7 @@ class BotRunContext:
 
     script: BotScript
     client_names: tuple[str, ...] = ()
-    expect_server_logs: tuple[str, ...] = ()
+    expect_server_logs: tuple[ServerLogExpectation, ...] = ()
     log_timeout: float = 15.0
     iterations: int = 1
     wait_after: float = 0.0
@@ -280,6 +364,7 @@ class BotRunContext:
     fail_fast: bool = False
     tags: tuple[str, ...] = ()
     enabled: bool = True
+    assertions: tuple["RunAssertionRule", ...] = ()
 
 
 class SampServerController:
@@ -403,6 +488,22 @@ class TestOrchestrator:
             selected.append(client)
         return selected
 
+    def _normalise_server_expectations(
+        self,
+        expectations: Sequence[ServerLogExpectation | str] | None,
+        default_timeout: float,
+    ) -> tuple[ServerLogExpectation, ...]:
+        if not expectations:
+            return ()
+        normalised: list[ServerLogExpectation] = []
+        for item in expectations:
+            if isinstance(item, ServerLogExpectation):
+                normalised.append(item.with_defaults(timeout=default_timeout))
+            else:
+                expectation = ServerLogExpectation(phrase=str(item), timeout=default_timeout)
+                normalised.append(expectation.with_defaults(timeout=default_timeout))
+        return tuple(normalised)
+
     def _run_on_clients(
         self,
         server_address: str,
@@ -442,8 +543,7 @@ class TestOrchestrator:
 
     def _evaluate_expectations(
         self,
-        expectations: Sequence[str],
-        timeout: float,
+        expectations: Sequence[ServerLogExpectation],
         monitor: "ServerLogMonitor | None",
     ) -> tuple[LogExpectationResult, ...]:
         if not expectations:
@@ -451,9 +551,22 @@ class TestOrchestrator:
         if monitor is None:
             raise ValueError("Brak monitora logów serwera do weryfikacji oczekiwań")
         results: list[LogExpectationResult] = []
-        for phrase in expectations:
-            matched = monitor.wait_for(phrase, timeout=timeout)
-            results.append(LogExpectationResult(phrase=phrase, matched=matched))
+        for expectation in expectations:
+            timeout = expectation.timeout if expectation.timeout is not None else 10.0
+            matches = monitor.wait_for_expectation(expectation, timeout=timeout)
+            matched = matches >= expectation.occurrences
+            results.append(
+                LogExpectationResult(
+                    phrase=expectation.phrase,
+                    matched=matched,
+                    matched_count=matches,
+                    required_occurrences=expectation.occurrences,
+                    match_type=expectation.match_type,
+                    case_sensitive=expectation.case_sensitive,
+                    description=expectation.description,
+                    timeout=timeout,
+                )
+            )
         return tuple(results)
 
     def _collect_client_monitors(
@@ -550,6 +663,7 @@ class TestOrchestrator:
         client_results: Sequence[ClientRunResult],
         log_expectations: Sequence[LogExpectationResult],
         client_log_expectations: Sequence[ClientLogExpectationResult],
+        assertions: Sequence[RunAssertionResult] | None = None,
     ) -> list[RunFailure]:
         failures: list[RunFailure] = []
         for client_result in client_results:
@@ -563,11 +677,17 @@ class TestOrchestrator:
                 )
         for expectation in log_expectations:
             if not expectation.matched:
+                details = (
+                    f"Znaleziono {expectation.matched_count}/{expectation.required_occurrences} dopasowań"
+                )
+                details += f" (typ: {expectation.match_type})"
+                if expectation.timeout is not None:
+                    details += f", timeout: {expectation.timeout:.2f}s"
                 failures.append(
                     RunFailure(
                         category="server_log",
                         subject=expectation.phrase,
-                        message="Nie znaleziono oczekiwanej frazy w logu serwera",
+                        message=details,
                     )
                 )
         for expectation in client_log_expectations:
@@ -579,14 +699,137 @@ class TestOrchestrator:
                         message=f"Brak frazy '{expectation.phrase}' w logu klienta",
                     )
                 )
+        if assertions:
+            for assertion in assertions:
+                if assertion.passed:
+                    continue
+                message = assertion.message or "Asercja nie została spełniona"
+                failures.append(
+                    RunFailure(
+                        category="assertion",
+                        subject=assertion.name,
+                        message=message,
+                    )
+                )
         return failures
+
+    def _expected_thresholds(self, rule: RunAssertionRule) -> dict[str, object]:
+        expected: dict[str, object] = {}
+        if rule.min_value is not None:
+            expected["min"] = rule.min_value
+        if rule.max_value is not None:
+            expected["max"] = rule.max_value
+        if rule.equals is not None:
+            expected["equals"] = rule.equals
+        if rule.expected_bool is not None:
+            expected["expected"] = rule.expected_bool
+        return expected
+
+    def _check_numeric_rule(
+        self, value: float | int | None, rule: RunAssertionRule
+    ) -> tuple[bool, str | None]:
+        if value is None:
+            return False, "Brak wartości do porównania"
+        if rule.equals is not None and value != rule.equals:
+            return False, f"Wartość {value} różni się od oczekiwanej {rule.equals}"
+        if rule.min_value is not None and value < rule.min_value:
+            return False, f"Wartość {value} jest mniejsza niż minimum {rule.min_value}"
+        if rule.max_value is not None and value > rule.max_value:
+            return False, f"Wartość {value} przekracza maksimum {rule.max_value}"
+        return True, None
+
+    def _evaluate_assertions(
+        self,
+        rules: Sequence[RunAssertionRule],
+        client_results: Sequence[ClientRunResult],
+        duration: float | None,
+    ) -> tuple[RunAssertionResult, ...]:
+        if not rules:
+            return ()
+        results: list[RunAssertionResult] = []
+        client_lookup: dict[str, ClientRunResult] = {
+            result.client_name: result for result in client_results
+        }
+        for rule in rules:
+            expected = self._expected_thresholds(rule)
+            message: str | None = None
+            passed = True
+            actual: float | int | bool | None = None
+            if rule.type == "total_duration":
+                actual = duration
+                passed, message = self._check_numeric_rule(actual, rule)
+            elif rule.type == "client_duration":
+                if not rule.client_name:
+                    passed = False
+                    message = "Reguła client_duration wymaga pola 'client'"
+                else:
+                    client_result = client_lookup.get(rule.client_name)
+                    if client_result is None or client_result.log is None:
+                        actual = None
+                        passed = False
+                        message = "Brak logu klienta do oceny czasu"
+                    else:
+                        actual = client_result.log.total_duration()
+                        passed, message = self._check_numeric_rule(actual, rule)
+            elif rule.type == "command_count":
+                if rule.client_name:
+                    client_result = client_lookup.get(rule.client_name)
+                    if client_result is None or client_result.log is None:
+                        actual = 0
+                    else:
+                        actual = client_result.log.command_count()
+                else:
+                    count = 0
+                    for client_result in client_results:
+                        if client_result.log is not None:
+                            count += client_result.log.command_count()
+                    actual = count
+                passed, message = self._check_numeric_rule(actual, rule)
+            elif rule.type == "screenshot_count":
+                if rule.client_name:
+                    client_result = client_lookup.get(rule.client_name)
+                    actual = len(client_result.screenshots) if client_result else 0
+                else:
+                    actual = sum(len(result.screenshots) for result in client_results)
+                passed, message = self._check_numeric_rule(actual, rule)
+            elif rule.type in {"require_log", "log_presence"}:
+                if not rule.client_name:
+                    passed = False
+                    message = "Reguła require_log wymaga pola 'client'"
+                else:
+                    client_result = client_lookup.get(rule.client_name)
+                    has_log = client_result is not None and client_result.log is not None
+                    expected_bool = rule.expected_bool if rule.expected_bool is not None else True
+                    expected.setdefault("expected", expected_bool)
+                    actual = has_log
+                    passed = has_log == expected_bool
+                    if not passed and expected_bool:
+                        message = "Oczekiwano logu klienta"
+                    elif not passed:
+                        message = "Oczekiwano braku logu klienta"
+            else:
+                passed = False
+                message = f"Nieznany typ asercji: {rule.type}"
+
+            if not passed and rule.message:
+                message = rule.message
+            result = RunAssertionResult(
+                name=rule.label(),
+                passed=passed,
+                actual=actual,
+                expected=expected,
+                message=message,
+                description=rule.description,
+            )
+            results.append(result)
+        return tuple(results)
 
     def run(
         self,
         script: BotScript,
         server_address: str | None = None,
         client_names: Sequence[str] | None = None,
-        expect_server_logs: Sequence[str] | None = None,
+        expect_server_logs: Sequence[ServerLogExpectation | str] | None = None,
         log_timeout: float = 15.0,
         client_log_expectations: Sequence[ClientLogExpectation] | None = None,
         record_playback_dir: Path | None = None,
@@ -595,11 +838,12 @@ class TestOrchestrator:
         client_log_exports: Sequence[ClientLogExportRequest] | None = None,
         attempt_index: int = 1,
         iteration_index: int = 0,
+        assertions: Sequence[RunAssertionRule] | None = None,
     ) -> TestRunResult:
         """Run the script across all configured clients."""
 
         selected_clients = self._select_clients(client_names)
-        expectations = tuple(expect_server_logs or ())
+        expectations = self._normalise_server_expectations(expect_server_logs, log_timeout)
         client_monitor_lookup = self._collect_client_monitors(selected_clients)
         client_expectations = tuple(client_log_expectations or ())
         client_export_requests = tuple(client_log_exports or ())
@@ -607,11 +851,12 @@ class TestOrchestrator:
         server_log_excerpt: str | None = None
         server_log_path: Path | None = None
         started_at = time.time()
+        assertion_rules = tuple(assertions or ())
         if server_address:
             results = self._run_on_clients(
                 server_address, script, selected_clients, record_dir=record_playback_dir
             )
-            log_expectations = self._evaluate_expectations(expectations, log_timeout, None)
+            log_expectations = self._evaluate_expectations(expectations, None)
             client_log_results = self._evaluate_client_expectations(
                 client_expectations, log_timeout, client_monitor_lookup
             )
@@ -619,7 +864,13 @@ class TestOrchestrator:
                 client_export_requests, client_monitor_lookup
             )
             finished_at = time.time()
-            failures = self._collect_failures(results, log_expectations, client_log_results)
+            duration = max(0.0, finished_at - started_at)
+            assertion_results = self._evaluate_assertions(
+                assertion_rules, results, duration
+            )
+            failures = self._collect_failures(
+                results, log_expectations, client_log_results, assertion_results
+            )
             return TestRunResult(
                 script=script,
                 client_results=tuple(results),
@@ -632,8 +883,9 @@ class TestOrchestrator:
                 iteration_index=iteration_index,
                 started_at=started_at,
                 finished_at=finished_at,
-                duration=max(0.0, finished_at - started_at),
+                duration=duration,
                 failures=tuple(failures),
+                assertions=assertion_results,
             )
 
         if self.server_controller is None:
@@ -648,7 +900,7 @@ class TestOrchestrator:
                 selected_clients,
                 record_dir=record_playback_dir,
             )
-            log_expectations = self._evaluate_expectations(expectations, log_timeout, monitor)
+            log_expectations = self._evaluate_expectations(expectations, monitor)
             client_log_results = self._evaluate_client_expectations(
                 client_expectations, log_timeout, client_monitor_lookup
             )
@@ -663,7 +915,13 @@ class TestOrchestrator:
                     server_log_export.write_text(excerpt, encoding="utf-8")
                     server_log_path = server_log_export
         finished_at = time.time()
-        failures = self._collect_failures(results, log_expectations, client_log_results)
+        duration = max(0.0, finished_at - started_at)
+        assertion_results = self._evaluate_assertions(
+            assertion_rules, results, duration
+        )
+        failures = self._collect_failures(
+            results, log_expectations, client_log_results, assertion_results
+        )
         return TestRunResult(
             script=script,
             client_results=tuple(results),
@@ -676,8 +934,9 @@ class TestOrchestrator:
             iteration_index=iteration_index,
             started_at=started_at,
             finished_at=finished_at,
-            duration=max(0.0, finished_at - started_at),
+            duration=duration,
             failures=tuple(failures),
+            assertions=assertion_results,
         )
 
     def run_suite(
@@ -712,6 +971,7 @@ class TestOrchestrator:
                         client_log_exports=run.client_log_exports,
                         attempt_index=attempt,
                         iteration_index=iteration,
+                        assertions=run.assertions,
                     )
                     results.append(result)
                     if result.is_successful():
@@ -745,6 +1005,7 @@ __all__ = [
     "PlaybackLog",
     "PlaybackEvent",
     "LogExpectationResult",
+    "ServerLogExpectation",
     "ClientLogExpectation",
     "ClientLogExpectationResult",
     "RunFailure",
@@ -753,6 +1014,8 @@ __all__ = [
     "ClientRunResult",
     "TestRunResult",
     "BotRunContext",
+    "RunAssertionRule",
+    "RunAssertionResult",
     "ServerLogMonitor",
     "ClientLogMonitor",
 ]
@@ -780,16 +1043,37 @@ class ServerLogMonitor:
         self._mark_offset = len(content)
 
     def wait_for(self, phrase: str, timeout: float = 10.0, poll_interval: float = 0.5) -> bool:
-        deadline = time.time() + timeout
-        while time.time() < deadline:
+        expectation = ServerLogExpectation(
+            phrase=phrase,
+            timeout=timeout,
+            poll_interval=poll_interval,
+        )
+        matches = self.wait_for_expectation(expectation, timeout=timeout)
+        return matches >= expectation.occurrences
+
+    def wait_for_expectation(
+        self, expectation: ServerLogExpectation, timeout: float | None = None
+    ) -> int:
+        poll_interval = expectation.poll_interval if expectation.poll_interval > 0 else 0.5
+        effective_timeout = (
+            timeout
+            if timeout is not None
+            else expectation.timeout if expectation.timeout is not None else 10.0
+        )
+        deadline = time.time() + effective_timeout if effective_timeout is not None else None
+        matches = 0
+        while True:
             content = self._read()
             segment = content[self._offset :]
-            if phrase in segment:
-                self._offset = len(content)
-                return True
+            if segment:
+                matches += expectation.count_matches(segment)
             self._offset = len(content)
+            if matches >= expectation.occurrences:
+                return matches
+            if deadline is not None and time.time() >= deadline:
+                break
             time.sleep(poll_interval)
-        return False
+        return matches
 
     def contains(self, phrase: str) -> bool:
         return phrase in self._read()
