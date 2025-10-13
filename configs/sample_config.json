@@ -1,0 +1,732 @@
+{
+  "name": "AutoRP",
+  "description": "Zaawansowany gamemode generowany automatycznie",
+  "author": "Zespół AutoRP",
+  "welcome_message": "Witamy na AutoRP! Przeczytaj regulamin i baw się dobrze.",
+  "default_faction": "Policja",
+  "factions": [
+    {"name": "Policja", "description": "Pilnuje porządku w mieście", "colour": "0x2645FFFF"},
+    {"name": "Medycy", "description": "Udzielają pomocy medycznej", "colour": "0x6BE26BFF"},
+    {"name": "News", "description": "Przekazują informacje mieszkańcom", "colour": "#FFB300"}
+  ],
+  "spawn_points": [
+    {"x": 1958.3783, "y": 1343.1572, "z": 15.3746, "angle": 270.0},
+    {"x": 1480.561, "y": -1753.208, "z": 13.5469, "angle": 90.0}
+  ],
+  "vehicles": [
+    {"model": 596, "x": 1576.42, "y": -1635.24, "z": 13.382, "rotation": 90.0, "colour1": 0, "colour2": 1, "respawn_delay": 120},
+    {"model": 416, "x": 1182.25, "y": -1325.42, "z": 13.56, "rotation": 0.0, "colour1": 1, "colour2": 3, "respawn_delay": 120}
+  ],
+  "items": [
+    {"name": "Apteczka", "description": "Jednorazowe wyleczenie 50HP", "price": 250, "weight": 0.4},
+    {"name": "Radio", "description": "Komunikacja głosowa frakcji", "price": 150, "weight": 0.2},
+    {"name": "Laptop", "description": "Dostęp do panelu frakcyjnego", "price": 1200, "weight": 2.0},
+    {"name": "Bandaz", "description": "Podstawowy opatrunek jednorazowy", "price": 35, "weight": 0.05}
+  ],
+  "jobs": [
+    {
+      "name": "Policjant",
+      "description": "Patrolowanie ulic miasta",
+      "salary": 600,
+      "join_command": "/dolacz_police",
+      "required_faction": "Policja",
+      "tasks": [
+        {"description": "Odwiedź komisariat i pobierz wyposażenie", "reward": 50, "command_hint": "/sluzba"},
+        {"description": "Zatrzymaj przestępcę na czerwonej strefie", "reward": 100},
+        {"description": "Patroluj centrum miasta przez 5 minut", "reward": 150}
+      ]
+    },
+    {
+      "name": "Ratownik",
+      "description": "Obsługa nagłych zgłoszeń medycznych",
+      "salary": 550,
+      "join_command": "/dolacz_medic",
+      "required_faction": "Medycy",
+      "tasks": [
+        {"description": "Wybierz ambulans i przygotuj wyposażenie", "reward": 50},
+        {"description": "Dowieź pacjenta do szpitala", "reward": 120}
+      ]
+    }
+  ],
+  "pickups": [
+    {"model": 1240, "type": 2, "x": 1555.24, "y": -1675.32, "z": 16.12, "world": 0, "respawn": 45},
+    {"model": 1242, "type": 3, "x": 1174.72, "y": -1323.88, "z": 14.54, "world": 0, "respawn": 60}
+  ],
+  "properties": [
+    {
+      "name": "Komisariat Downtown",
+      "description": "Bazowe zaplecze frakcji policyjnej",
+      "price": 125000,
+      "entrance": {"x": 1553.12, "y": -1675.48, "z": 16.10, "world": 0, "interior": 0, "angle": 180.0},
+      "interior": {"x": 246.78, "y": 109.39, "z": 1003.21, "world": 1, "interior": 10, "angle": 90.0},
+      "required_faction": "Policja",
+      "purchase_command": "/kup_komisariat"
+    },
+    {
+      "name": "Ambulatorium",
+      "description": "Niewielka placówka medyczna na start frakcji",
+      "price": 98000,
+      "entrance": {"x": 1178.02, "y": -1325.11, "z": 14.39, "world": 0, "interior": 0, "angle": 0.0},
+      "interior": {"x": 203.63, "y": 75.19, "z": 1005.26, "world": 2, "interior": 3, "angle": 0.0}
+    }
+  ],
+  "businesses": [
+    {
+      "name": "Sklep Elektroniczny",
+      "type": "Sklep",
+      "product": "Radio Policyjne",
+      "price": 350,
+      "stock": 12,
+      "x": 1550.42,
+      "y": -1670.35,
+      "z": 16.2,
+      "world": 0,
+      "interior": 0,
+      "pickup_model": 1276,
+      "pickup_type": 1,
+      "pickup_respawn": 45,
+      "command": "/kup_radio",
+      "required_faction": "Policja",
+      "required_job": "Policjant"
+    },
+    {
+      "name": "Apteka Centralna",
+      "type": "Apteka",
+      "product": "Zestaw Leków",
+      "price": 220,
+      "stock": 20,
+      "x": 1176.48,
+      "y": -1321.92,
+      "z": 14.55,
+      "world": 0,
+      "interior": 0,
+      "pickup_model": 1279,
+      "pickup_type": 1,
+      "pickup_respawn": 40,
+      "command": "/kup_leki",
+      "required_faction": "Medycy",
+      "required_job": "Ratownik"
+    }
+  ],
+  "npcs": [
+    {
+      "name": "Oficer Kowalski",
+      "skin": 280,
+      "x": 1551.82,
+      "y": -1673.21,
+      "z": 16.00,
+      "angle": 180.0,
+      "dialogue": [
+        "Dzień dobry! Tutaj odbierzesz wyposażenie i raporty.",
+        "Zanim wyjedziesz na patrol upewnij się, że masz kamizelkę."
+      ],
+      "command": "/rozmowa_policja",
+      "faction": "Policja"
+    },
+    {
+      "name": "Doktor Nowak",
+      "skin": 70,
+      "x": 1180.55,
+      "y": -1323.44,
+      "z": 13.56,
+      "angle": 0.0,
+      "dialogue": [
+        "Trzymaj apteczkę i pamiętaj o uzupełnianiu leków.",
+        "Mamy dziś sporo zgłoszeń z centrum miasta."
+      ],
+      "command": "/rozmowa_medycy"
+    }
+  ],
+  "quests": [
+    {
+      "name": "Rekrutacja Policyjna",
+      "description": "Krótki ciąg zadań wprowadzający nowych funkcjonariuszy.",
+      "start_command": "/quest_policja",
+      "required_faction": "Policja",
+      "reward_money": 750,
+      "reward_item": "Radio",
+      "completion_message": "Gratulacje! Uzyskałeś pełne uprawnienia patrolowe.",
+      "steps": [
+        {"description": "Zgłoś się do oficera Kowalskiego przy recepcji.", "hint": "Użyj /rozmowa_policja aby rozpocząć dialog."},
+        {"description": "Odbierz radiowóz z garażu.", "teleport": {"x": 1560.8, "y": -1670.2, "z": 16.2}, "hint": "Podejdź do policyjnego garażu.", "reward_money": 150},
+        {"description": "Zamelduj się na kanale radiowym.", "hint": "Wpisz /sluzba, aby rozpocząć służbę."}
+      ]
+    },
+    {
+      "name": "Dyżur Medyczny",
+      "description": "Instruktaż dla świeżo przyjętych ratowników.",
+      "required_faction": "Medycy",
+      "reward_money": 600,
+      "reward_item": "Apteczka",
+      "completion_message": "Twoja zmiana dobiegła końca - świetna robota!",
+      "steps": [
+        {"description": "Spotkaj się z Doktorem Nowakiem w ambulatorium.", "hint": "Użyj /rozmowa_medycy aby odebrać instrukcje."},
+        {"description": "Zabezpiecz zapasy w ambulansie.", "teleport": {"x": 1185.12, "y": -1328.44, "z": 13.68}, "give_item": "Bandaz"},
+        {"description": "Dostarcz pacjenta do szpitala.", "hint": "Dowieź figuranta NPC lub skorzystaj z trybu testowego."}
+      ]
+    }
+  ],
+  "commands": [
+    {
+      "trigger": "/pomoc",
+      "responses": [
+        "=== Lista komend ===",
+        "/sluzba - rozpocznij służbę w swojej frakcji",
+        "/szpital - teleport do szpitala",
+        "/ekonomia - podgląd stawek wypłat"
+      ]
+    },
+    {
+      "trigger": "/sluzba",
+      "responses": ["Rozpoczynasz służbę."],
+      "grant_money": 500,
+      "required_faction": "Policja"
+    },
+    {
+      "trigger": "/szpital",
+      "responses": ["Teleportujemy cię do szpitala."],
+      "teleport": {"x": 1181.58, "y": -1324.36, "z": 13.57}
+    },
+    {
+      "trigger": "/ekonomia",
+      "responses": [
+        "Wypłata bazowa: 600$",
+        "Podatek: 5%",
+        "Domyślne konto bankowe: 1000$"
+      ]
+    }
+  ],
+  "crafting": [
+    {
+      "name": "Apteczka Zaawansowana",
+      "description": "Połącz standardową apteczkę z dodatkowymi bandażami.",
+      "inputs": [
+        {"item": "Apteczka", "quantity": 1},
+        {"item": "Bandaz", "quantity": 3}
+      ],
+      "output_item": "Apteczka Zaawansowana",
+      "output_quantity": 1,
+      "command": "/craft_apteczka",
+      "required_job": "Ratownik"
+    },
+    {
+      "name": "Pakiet Policyjny",
+      "description": "Zestaw wyposażenia do szybkiego patrolu.",
+      "inputs": [
+        {"item": "Radio", "quantity": 1},
+        {"item": "Bandaz", "quantity": 2}
+      ],
+      "output_item": "Pakiet Patrolowy",
+      "output_quantity": 1,
+      "command": "/craft_patrol",
+      "required_job": "Policjant"
+    }
+  ],
+  "bot_macros": [
+    {
+      "name": "announce_status",
+      "parameters": ["status"],
+      "steps": [
+        {"type": "chat", "message": "Status jednostki: {{status}}"},
+        {"type": "wait", "seconds": 0.5}
+      ]
+    }
+  ],
+  "bot_variables": {
+    "status_code": "S01"
+  },
+  "bot_scenarios": [
+    {
+      "name": "police_patrol",
+      "description": "Bot sprawdza dołączenie do policji i teleport",
+      "variables": {"status_code": "P01"},
+      "macros": [
+        {
+          "name": "radio_check",
+          "steps": [
+            {"type": "chat", "message": "Radio sprawne, kod {{status_code}}"}
+          ]
+        }
+      ],
+      "steps": [
+        {"type": "macro", "name": "announce_status", "arguments": {"status": "P01"}},
+        {"type": "macro", "name": "radio_check"},
+        {"type": "command", "value": "/pomoc"},
+        {"type": "chat", "message": "Dzień dobry, rozpoczynam patrol."},
+        {"type": "command", "value": "/dolacz_police"},
+        {"type": "wait", "seconds": 1.5},
+        {"type": "teleport", "x": 1568.2, "y": -1711.4, "z": 13.4},
+        {"type": "command", "value": "/kod {{status_code}}"},
+        {"type": "command", "value": "/szpital"}
+      ]
+    },
+    {
+      "name": "heist_briefing",
+      "description": "Dwóch funkcjonariuszy przygotowuje odprawę przed napadem próbny",
+      "steps": [
+        {"type": "command", "value": "/heist_poczta"},
+        {"type": "wait", "seconds": 2},
+        {"type": "chat", "message": "Sprawdzamy zabezpieczenia i kamery."},
+        {"type": "command", "value": "/wanted"},
+        {"type": "teleport", "x": 1484.42, "y": -1772.11, "z": 18.8, "interior": 0, "world": 0},
+        {"type": "wait", "seconds": 1},
+        {"type": "chat", "message": "Zespół drugi, potwierdź gotowość."}
+      ]
+    },
+    {
+      "name": "client_focus_demo",
+      "description": "Przykład interakcji z oknem klienta SA-MP",
+      "steps": [
+        {"type": "focus_window", "title": "San Andreas Multiplayer"},
+        {"type": "type_text", "text": "qa_bot"},
+        {"type": "wait", "seconds": 0.3},
+        {"type": "mouse_move", "x": 640, "y": 480, "duration": 0.15},
+        {"type": "mouse_click", "button": "left"},
+        {"type": "key_sequence", "keys": ["f8", "enter"], "interval": 0.2},
+        {"type": "mouse_scroll", "direction": "down", "steps": 3},
+        {
+          "type": "mouse_drag",
+          "start": {"x": 620, "y": 420},
+          "end": {"x": 680, "y": 520},
+          "duration": 0.1,
+          "hold": 0.05
+        },
+        {"type": "key_combo", "keys": ["ctrl", "s"], "hold": 0.1},
+        {"type": "chat", "message": "Kod globalny: {{status_code}}"},
+        {"type": "screenshot", "name": "client_focus", "path": "Test/screenshots/client_focus.png"}
+      ]
+    }
+  ],
+  "bot_automation": {
+    "variables": {"status_code": "AUTO"},
+    "clients": [
+      {
+        "name": "dummy_suite",
+        "type": "dummy",
+        "command_file": "Test/patrol_suite.log",
+        "command_separator": "\n",
+        "connect_delay": 0.1,
+        "logs": [
+          {"name": "dummy_chat", "path": "Test/logs/dummy_chat.log"}
+        ],
+        "setup_actions": [
+          {"type": "wait", "seconds": 0.25}
+        ]
+      },
+      {
+        "name": "wine_suite",
+        "type": "wine",
+        "gta_dir": "Test/gta_stub",
+        "launcher": "samp.exe",
+        "wine_binary": "wine",
+        "dry_run": true,
+        "command_file": "Test/wine_suite_commands.txt",
+        "reset_commands_on_connect": true,
+        "focus_window": true,
+        "xdotool_binary": "xdotool",
+        "chatlog": "Test/gta_stub/SAMP/chatlog.txt",
+        "logs": [
+          {"name": "playback", "path": "Test/gta_stub/logs/playback.log"}
+        ],
+        "setup_actions": [
+          {"type": "focus_window"},
+          {"type": "type_text", "text": "autorptest"}
+        ],
+        "teardown_actions": [
+          {"type": "screenshot", "name": "suite_teardown"}
+        ],
+        "environment": {"WINEDEBUG": "-all"}
+      }
+    ],
+    "runs": [
+      {
+        "scenario": "police_patrol",
+        "clients": ["dummy_suite"],
+        "expect_server_logs": [
+          {
+            "phrase": "Status jednostki",
+            "occurrences": 1,
+            "timeout": 5.0
+          }
+        ],
+        "log_timeout": 5.0,
+        "iterations": 1,
+        "wait_before": 0.2,
+        "expect_client_logs": [
+          {"client": "dummy_suite", "phrase": "Dzień dobry"}
+        ],
+        "record_playback_dir": "Test/playback/patrol",
+        "collect_server_log": true,
+        "server_log_export": "Test/logs/patrol_server.log",
+        "export_client_logs": [
+          {
+            "client": "dummy_suite",
+            "log": "dummy_chat",
+            "target": "Test/logs/patrol_dummy_chat.log"
+          }
+        ],
+        "tags": ["smoke", "patrol"],
+        "retries": 1,
+        "grace_period": 0.5,
+        "fail_fast": true,
+        "enabled": true,
+        "assertions": [
+          {
+            "name": "patrol_commands",
+            "type": "command_count",
+            "client": "dummy_suite",
+            "min": 3,
+            "description": "Patrol bot powinien wysłać co najmniej trzy komendy"
+          },
+          {
+            "name": "patrol_duration",
+            "type": "total_duration",
+            "max": 20.0,
+            "message": "Patrol nie może trwać dłużej niż 20s"
+          },
+          {
+            "type": "require_log",
+            "client": "dummy_suite",
+            "description": "Dummy klient musi zwrócić log przebiegu"
+          }
+        ]
+      },
+      {
+        "scenario": "heist_briefing",
+        "clients": ["dummy_suite", "wine_suite"],
+        "expect_server_logs": [
+          {
+            "phrase": "[AutoRP]",
+            "match_type": "substring",
+            "timeout": 10.0
+          }
+        ],
+        "log_timeout": 10.0,
+        "iterations": 2,
+        "wait_after": 1.0,
+        "expect_client_logs": [
+          {"client": "wine_suite", "phrase": "Zespół drugi"}
+        ],
+        "record_playback_dir": "Test/playback/heist",
+        "export_client_logs": [
+          {
+            "client": "wine_suite",
+            "log": "playback",
+            "target": "Test/logs/heist_wine_playback.log",
+            "include_full": true
+          }
+        ],
+        "tags": ["heist", "multi-client"],
+        "retries": 0,
+        "grace_period": 0.0,
+        "fail_fast": false,
+        "enabled": true,
+        "assertions": [
+          {
+            "type": "command_count",
+            "name": "łączna liczba komend",
+            "min": 5,
+            "description": "Oba boty powinny wygenerować co najmniej pięć komend"
+          },
+          {
+            "type": "screenshot_count",
+            "client": "wine_suite",
+            "min": 1,
+            "description": "Klient Wine zbiera przynajmniej jeden zrzut ekranu"
+          }
+        ]
+      },
+      {
+        "scenario": "client_focus_demo",
+        "clients": ["wine_suite"],
+        "expect_server_logs": ["client focus"],
+        "log_timeout": 8.0,
+        "iterations": 1,
+        "expect_client_logs": [
+          {"client": "wine_suite", "phrase": "qa_bot", "log": "playback", "timeout": 3.0}
+        ],
+        "record_playback_dir": "Test/playback/window",
+        "collect_server_log": true,
+        "tags": ["focus", "window"],
+        "retries": 2,
+        "grace_period": 0.25,
+        "fail_fast": false,
+        "enabled": true,
+        "assertions": [
+          {
+            "type": "client_duration",
+            "client": "wine_suite",
+            "max": 12.0,
+            "description": "Demo okna kończy się w mniej niż 12 sekund"
+          },
+          {
+            "type": "require_log",
+            "client": "wine_suite",
+            "expected": true,
+            "message": "Oczekiwany log playback dla klienta wine"
+          }
+        ]
+      }
+    ]
+  },
+  "achievements": [
+    {
+      "name": "Pierwsza Służba",
+      "description": "Rozpocznij służbę w swojej frakcji.",
+      "reward_money": 200,
+      "announce_global": true,
+      "command": "/achievement_sluzba"
+    },
+    {
+      "name": "Ratunek Dnia",
+      "description": "Udziel pomocy trzem poszkodowanym w jednej sesji.",
+      "reward_money": 300
+    }
+  ],
+  "skills": [
+    {
+      "name": "Strzelectwo",
+      "description": "Kontrola broni krótkiej i celność na strzelnicy.",
+      "command": "/skill_strzelectwo",
+      "levels": [
+        {"xp": 120, "message": "Odblokowujesz dodatkowe magazynki na patrolach."},
+        {"xp": 280, "message": "Strzelasz pewniej podczas pościgu samochodowego."},
+        {"xp": 520, "message": "Twoja broń zachowuje stabilność nawet przy ogniu ciągłym."}
+      ]
+    },
+    {
+      "name": "Medycyna Polowa",
+      "description": "Praktyczne umiejętności opatrywania rannych w terenie.",
+      "command": "/skill_medycyna",
+      "levels": [
+        {"xp": 90, "message": "Stabilizujesz pacjentów szybciej o 10%."},
+        {"xp": 240, "message": "Odblokowujesz dostęp do zaawansowanych zestawów opatrunkowych."}
+      ]
+    }
+  ],
+  "skill_trainings": [
+    {
+      "name": "Strzelnica Policyjna",
+      "skill": "Strzelectwo",
+      "command": "/trening_strzelnica",
+      "xp_gain": 40,
+      "cooldown": 150,
+      "description": "Oddaj serię kontrolowanych strzałów wraz z instruktorem.",
+      "success_message": "Instruktor chwali Twoją celność i skupienie."
+    },
+    {
+      "name": "Warsztat Medyczny",
+      "skill": "Medycyna Polowa",
+      "command": "/trening_medyczny",
+      "xp_gain": 45,
+      "cooldown": 180,
+      "description": "Przeprowadź symulację akcji ratunkowej na fantomie.",
+      "success_message": "Zespół ufa Twoim nowym procedurom ratunkowym."
+    }
+  ],
+  "territories": [
+    {
+      "name": "Plac Rządowy",
+      "description": "Strategiczny teren przy ratuszu generujący premie dla służb porządkowych.",
+      "x": 1481.52,
+      "y": -1752.24,
+      "z": 13.55,
+      "radius": 25.0,
+      "owner_faction": "Policja",
+      "income": 400,
+      "capture_time": 45,
+      "reward_money": 300,
+      "info_command": "/teren_ratusz",
+      "capture_command": "/przejmij_ratusz",
+      "broadcast_message": "Plac rządowy zmienia barwy!"
+    },
+    {
+      "name": "Rynek Medyczny",
+      "description": "Zespół helipadów i punktów pomocy medycznej w centrum miasta.",
+      "x": 1178.44,
+      "y": -1320.12,
+      "z": 14.60,
+      "radius": 20.0,
+      "owner_faction": "Medycy",
+      "income": 320,
+      "capture_time": 60,
+      "reward_money": 250,
+      "info_command": "/teren_medycy",
+      "capture_command": "/przejmij_medycy",
+      "broadcast_message": "Kontrola nad rynkiem usług medycznych została przejęta!"
+    }
+  ],
+  "law": {
+    "stop_patrol_command": "/zakoncz_patrol",
+    "violations": [
+      {
+        "code": "SPEEDING",
+        "name": "Przekroczenie prędkości",
+        "description": "Prowadzenie pojazdu z prędkością większą o ponad 30 km/h od dozwolonej.",
+        "severity": 1,
+        "fine": 500,
+        "jail_minutes": 0,
+        "reputation_penalty": 2
+      },
+      {
+        "code": "ILLEGALARMS",
+        "name": "Nielegalna broń",
+        "description": "Posiadanie niezarejestrowanej lub zabronionej broni palnej.",
+        "severity": 3,
+        "fine": 2500,
+        "jail_minutes": 12,
+        "reputation_penalty": 6
+      },
+      {
+        "code": "BANKROBBERY",
+        "name": "Napad na bank",
+        "description": "Udział w zorganizowanym napadzie na instytucję finansową.",
+        "severity": 5,
+        "fine": 7500,
+        "jail_minutes": 25,
+        "reputation_penalty": 12
+      }
+    ],
+    "patrol_routes": [
+      {
+        "name": "Downtown Patrol",
+        "faction": "Policja",
+        "loop": true,
+        "command": "/patrol_downtown",
+        "radio_message": "Jednostka 51 rozpoczyna obchód Downtown.",
+        "points": [
+          {"x": 1548.12, "y": -1678.44, "z": 13.56, "wait_seconds": 15},
+          {"x": 1603.45, "y": -1602.55, "z": 13.52, "wait_seconds": 18},
+          {"x": 1456.23, "y": -1584.30, "z": 13.50, "wait_seconds": 20},
+          {"x": 1502.11, "y": -1720.75, "z": 13.54, "wait_seconds": 16}
+        ]
+      },
+      {
+        "name": "Korytarz Medyczny",
+        "faction": "Medycy",
+        "loop": false,
+        "command": "/patrol_medyczny",
+        "radio_message": "Zespół ratunkowy Alfa zabezpiecza korytarz medyczny.",
+        "points": [
+          {"x": 1181.74, "y": -1322.18, "z": 13.56, "wait_seconds": 14},
+          {"x": 1232.88, "y": -1303.22, "z": 13.55, "wait_seconds": 20},
+          {"x": 1276.32, "y": -1382.48, "z": 13.48, "wait_seconds": 22}
+        ]
+      }
+    ]
+  },
+  "heists": [
+    {
+      "name": "Symulacja Napadu Downtown",
+      "location": "Skrytka bankowa przy Vinewood Plaza",
+      "cooldown_minutes": 45,
+      "required_players": 3,
+      "required_faction": "Policja",
+      "required_items": ["Pakiet Patrolowy", "Radio"],
+      "reward_money": 1800,
+      "reward_item": "Medal Służby",
+      "reward_reputation": 2,
+      "start_command": "/heist_bank",
+      "announcement": "Rozpoczyna się symulowany napad bankowy Downtown!",
+      "stages": [
+        {
+          "description": "Zabezpiecz dojazdy do banku i ustaw blokady.",
+          "time_limit": 45,
+          "success_message": "Blokady ustawione, teren zabezpieczony."
+        },
+        {
+          "description": "Przeprowadź szturm na skarbiec i unieszkodliw zagrożenie.",
+          "time_limit": 60,
+          "success_message": "Skarbiec przejęty, terroryści pojmani.",
+          "failure_message": "Szturm nie powiódł się, napad wymknął się spod kontroli!"
+        },
+        {
+          "description": "Ewakuuj cywilów oraz zabezpiecz dowody.",
+          "time_limit": 50,
+          "success_message": "Cywile uratowani, dowody zabezpieczone."
+        }
+      ]
+    },
+    {
+      "name": "Operacja Ewakuacja",
+      "location": "Wieżowiec konferencyjny Commerce",
+      "cooldown_minutes": 35,
+      "required_players": 2,
+      "required_faction": "Medycy",
+      "required_items": ["Apteczka Zaawansowana"],
+      "reward_money": 1200,
+      "reward_item": "Odznaka Ratownika",
+      "reward_reputation": 3,
+      "start_command": "/heist_ewakuacja",
+      "announcement": "Medycy rozpoczynają operację ewakuacji rannych z wieżowca!",
+      "stages": [
+        {
+          "description": "Utwórz mobilny punkt medyczny przy wejściu.",
+          "time_limit": 30,
+          "success_message": "Punkt medyczny w pełni funkcjonalny."
+        },
+        {
+          "description": "Zabezpiecz rannych na 20 piętrze i rozpocznij transport.",
+          "time_limit": 55,
+          "success_message": "Ranni w drodze do ambulansów."
+        },
+        {
+          "description": "Dostarcz poszkodowanych do szpitala polowego.",
+          "time_limit": 45,
+          "success_message": "Ewakuacja zakończona sukcesem, pacjenci bezpieczni."
+        }
+      ]
+    }
+  ],
+  "events": [
+    {
+      "name": "payday",
+      "interval_ms": 600000,
+      "announce": [
+        "Automatyczny bonus służbowy został wypłacony.",
+        "Sprawdź konto bankowe u skarbnika!"
+      ],
+      "grant_money": 250,
+      "target_faction": "Policja"
+    },
+    {
+      "name": "city_lottery",
+      "interval_ms": 900000,
+      "announce": "Losowanie miejskiej loterii!",
+      "grant_money": 150,
+      "rcon_command": "echo [AutoRP] Przeprowadzono loterię"
+    }
+  ],
+  "weather_cycle": [
+    {"hour": 8, "weather": 2, "duration_minutes": 45, "description": "Poranna mgła ustępuje słońcu."},
+    {"hour": 12, "weather": 1, "duration_minutes": 60, "description": "Słoneczne południe nad miastem."},
+    {"hour": 19, "weather": 8, "duration_minutes": 30, "description": "Wieczorne zachmurzenie z delikatnym deszczem."}
+  ],
+  "economy": {
+    "base_paycheck": 600,
+    "paycheck_interval": 180000,
+    "tax_rate": 0.05,
+    "default_bank_balance": 1000
+  },
+  "server": {
+    "hostname": "AutoRP Development",
+    "rcon_password": "superHaslo123",
+    "port": 7777,
+    "max_players": 100,
+    "language": "pl",
+    "weburl": "autorprp.local",
+    "announce": 0,
+    "lanmode": 1,
+    "filterscripts": ["npc_record", "mapfix"],
+    "plugins": ["crashdetect", "streamer"]
+  },
+  "world": {
+    "time": 12,
+    "weather": 2,
+    "gravity": 0.0075,
+    "stunt_bonus": false,
+    "interior_enter_exits": false,
+    "name_tag_draw_distance": 30.0,
+    "use_player_ped_anims": true
+  }
+}
