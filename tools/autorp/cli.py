@@ -8,6 +8,7 @@ from pathlib import Path
 from .bots import BufferedCommandTransport, DummyBotClient, FileCommandTransport, WineSampClient
 from .config import BotClientDefinition, GamemodeConfig
 from .generator import GamemodeGenerator
+from .slug import slugify_description
 from .tester import BotRunContext, SampServerController, TestOrchestrator
 
 
@@ -352,16 +353,6 @@ def main(argv: list[str] | None = None) -> Path:
                 contexts = plan_contexts
             else:
                 contexts = [BotRunContext(script=script) for script in scripts]
-            def _slugify(text: str) -> str:
-                normalised = (text or "scenario").strip().lower()
-                if not normalised:
-                    normalised = "scenario"
-                safe = [
-                    char if char.isalnum() or char in {"-", "_"} else "_"
-                    for char in normalised
-                ]
-                slug = "".join(safe)
-                return slug or "scenario"
             include_filters = {value.strip().lower() for value in args.bot_only or [] if value}
             exclude_filters = {value.strip().lower() for value in args.bot_skip or [] if value}
 
@@ -371,7 +362,7 @@ def main(argv: list[str] | None = None) -> Path:
                 if desc:
                     lowered = desc.lower()
                     tokens.add(lowered)
-                    tokens.add(_slugify(desc))
+                    tokens.add(slugify_description(desc))
                 tokens.update(tag.lower() for tag in context.tags)
                 return {token for token in tokens if token}
 
@@ -443,13 +434,13 @@ def main(argv: list[str] | None = None) -> Path:
             if server_log_root is not None:
                 for context in contexts:
                     if context.server_log_export is None:
-                        slug = _slugify(context.script.description or "scenario")
+                        slug = slugify_description(context.script.description)
                         context.server_log_export = server_log_root / f"{slug}_server.log"
             if client_log_root is not None:
                 for context in contexts:
                     for export in context.client_log_exports:
                         if export.target_path is None:
-                            slug = _slugify(context.script.description or "scenario")
+                            slug = slugify_description(context.script.description)
                             export.target_path = (
                                 client_log_root
                                 / f"{slug}_{export.client_name}_{export.log_name}.log"
@@ -558,6 +549,7 @@ def main(argv: list[str] | None = None) -> Path:
                         {
                             "description": desc,
                             "status": status,
+                            "tags": list(result.tags),
                             "attempt": result.attempt_index,
                             "iteration": result.iteration_index,
                             "duration": result.duration,
@@ -644,22 +636,317 @@ def main(argv: list[str] | None = None) -> Path:
                     )
                 print("---")
 
+            stats = TestOrchestrator.summarise_results(results)
+            scenario_stats = TestOrchestrator.summarise_per_script(results)
+            client_stats = TestOrchestrator.summarise_per_client(results)
+            tag_stats = TestOrchestrator.summarise_per_tag(results)
+            print(
+                "Podsumowanie: "
+                f"{stats.successful_runs}/{stats.total_runs} scenariuszy zakończonych sukcesem"
+            )
+            if stats.success_rate is not None:
+                print(f"   skuteczność: {stats.success_rate * 100:.1f}%")
+            duration_segments: list[str] = []
+            if stats.average_duration is not None:
+                duration_segments.append(f"średni {stats.average_duration:.2f}s")
+            if stats.median_duration is not None:
+                duration_segments.append(f"mediana {stats.median_duration:.2f}s")
+            if stats.p90_duration is not None:
+                duration_segments.append(f"p90 {stats.p90_duration:.2f}s")
+            if (
+                stats.shortest_duration is not None
+                and stats.longest_duration is not None
+                and stats.total_runs
+            ):
+                duration_segments.append(
+                    f"zakres {stats.shortest_duration:.2f}s-{stats.longest_duration:.2f}s"
+                )
+            if duration_segments:
+                print(f"   czasy: {', '.join(duration_segments)}")
+            if stats.total_commands:
+                print(
+                    "   komendy: "
+                    f"łącznie {stats.total_commands}, unikalnych {stats.unique_commands}"
+                )
+                if stats.top_commands:
+                    top_preview = ", ".join(
+                        f"{command} ({count})" for command, count in stats.top_commands
+                    )
+                    print(f"   najczęstsze komendy: {top_preview}")
+            if stats.total_actions:
+                action_line = f"   akcje: łącznie {stats.total_actions}"
+                if stats.screenshot_actions:
+                    action_line += f", screenshoty {stats.screenshot_actions}"
+                if stats.captured_screenshots:
+                    action_line += (
+                        f", zapisane pliki {stats.captured_screenshots}"
+                    )
+                print(action_line)
+                action_breakdown = sorted(
+                    stats.action_types.items(), key=lambda item: (-item[1], item[0])
+                )
+                if action_breakdown:
+                    action_preview = ", ".join(
+                        f"{action} ({count})" for action, count in action_breakdown[:5]
+                    )
+                    print(f"   najczęstsze akcje: {action_preview}")
+            if stats.total_wait_time > 0:
+                print(
+                    "   łączny czas oczekiwania: "
+                    f"{stats.total_wait_time:.2f}s"
+                )
+            if stats.failure_categories:
+                details = ", ".join(
+                    f"{category}: {count}" for category, count in sorted(stats.failure_categories.items())
+                )
+                print(f"   kategorie błędów: {details}")
+            interesting_scenarios = [
+                (description, summary)
+                for description, summary in scenario_stats.items()
+                if summary.failed_runs or summary.retries
+            ]
+            if interesting_scenarios:
+                print("   szczegóły scenariuszy:")
+                for description, summary in interesting_scenarios:
+                    print(
+                        "      "
+                        f"{description}: {summary.successful_runs}/{summary.total_runs} udanych, "
+                        f"ostatni wynik {summary.last_status}"
+                    )
+                    scenario_duration_parts: list[str] = []
+                    if summary.average_duration is not None:
+                        scenario_duration_parts.append(
+                            f"średnio {summary.average_duration:.2f}s"
+                        )
+                    if summary.median_duration is not None:
+                        scenario_duration_parts.append(
+                            f"mediana {summary.median_duration:.2f}s"
+                        )
+                    if summary.p90_duration is not None:
+                        scenario_duration_parts.append(f"p90 {summary.p90_duration:.2f}s")
+                    if scenario_duration_parts:
+                        print("         czasy: " + ", ".join(scenario_duration_parts))
+                    if summary.retries:
+                        print(
+                            "         "
+                            f"ponowień: {summary.retries}, sukcesów po ponowieniu: {summary.flaky_successes}"
+                        )
+                    if summary.failure_categories:
+                        scenario_details = ", ".join(
+                            f"{category}: {count}"
+                            for category, count in sorted(summary.failure_categories.items())
+                        )
+                        print(f"         błędy: {scenario_details}")
+                    if summary.total_commands:
+                        print(
+                            "         "
+                            f"komendy: łącznie {summary.total_commands}, unikalnych {summary.unique_commands}"
+                        )
+                        if summary.top_commands:
+                            scenario_top = ", ".join(
+                                f"{command} ({count})"
+                                for command, count in summary.top_commands
+                            )
+                            print(f"         najczęstsze: {scenario_top}")
+                    if summary.total_actions:
+                        action_line = (
+                            "         "
+                            f"akcje: łącznie {summary.total_actions}"
+                        )
+                        if summary.screenshot_actions:
+                            action_line += (
+                                f", screenshoty {summary.screenshot_actions}"
+                            )
+                        if summary.captured_screenshots:
+                            action_line += (
+                                f", zapisane pliki {summary.captured_screenshots}"
+                            )
+                        print(action_line)
+                        action_breakdown = sorted(
+                            summary.action_types.items(),
+                            key=lambda item: (-item[1], item[0]),
+                        )
+                        if action_breakdown:
+                            action_preview = ", ".join(
+                                f"{action} ({count})"
+                                for action, count in action_breakdown[:5]
+                            )
+                            print(f"         najczęstsze akcje: {action_preview}")
+                    if summary.total_wait_time > 0:
+                        print(
+                            "         "
+                            f"czas oczekiwania: {summary.total_wait_time:.2f}s"
+                        )
+
+            if client_stats:
+                print("   statystyki klientów:")
+                for name, summary in client_stats.items():
+                    print(
+                        "      "
+                        f"{name}: {summary.successful_runs}/{summary.total_runs} udanych, "
+                        f"ostatni wynik {summary.last_status}"
+                    )
+                    print(
+                        "         "
+                        f"logi odtwarzania: {summary.runs_with_logs}/{summary.total_runs}"
+                    )
+                    if summary.total_commands:
+                        average_commands = (
+                            f"{summary.average_commands:.1f}"
+                            if summary.average_commands is not None
+                            else "-"
+                        )
+                        command_line = (
+                            "         "
+                            f"komendy: łącznie {summary.total_commands}, średnio {average_commands} na log, "
+                            f"unikalnych {summary.unique_commands}"
+                        )
+                        if summary.median_commands is not None:
+                            command_line += f", mediana {summary.median_commands:.1f}"
+                        print(command_line)
+                        if summary.top_commands:
+                            top_line = ", ".join(
+                                f"{command} ({count})"
+                                for command, count in summary.top_commands
+                            )
+                            print(f"         najczęstsze: {top_line}")
+                    if summary.total_actions:
+                        avg_actions = (
+                            f"{summary.average_actions:.1f}"
+                            if summary.average_actions is not None
+                            else "-"
+                        )
+                        action_line = (
+                            "         "
+                            f"akcje: łącznie {summary.total_actions}, średnio {avg_actions} na log"
+                        )
+                        if summary.median_actions is not None:
+                            action_line += f", mediana {summary.median_actions:.1f}"
+                        print(action_line)
+                        if summary.screenshot_actions or summary.captured_screenshots:
+                            details: list[str] = []
+                            if summary.screenshot_actions:
+                                details.append(
+                                    f"screenshoty {summary.screenshot_actions}"
+                                )
+                            if summary.captured_screenshots:
+                                details.append(
+                                    f"zapisane pliki {summary.captured_screenshots}"
+                                )
+                            print("         " + ", ".join(details))
+                        action_breakdown = sorted(
+                            summary.action_types.items(),
+                            key=lambda item: (-item[1], item[0]),
+                        )
+                        if action_breakdown:
+                            action_preview = ", ".join(
+                                f"{action} ({count})"
+                                for action, count in action_breakdown[:5]
+                            )
+                            print(f"         najczęstsze akcje: {action_preview}")
+                    if summary.total_wait_time > 0:
+                        print(
+                            "         "
+                            f"czas oczekiwania: {summary.total_wait_time:.2f}s"
+                        )
+                    if summary.average_log_duration is not None:
+                        log_line = (
+                            "         "
+                            f"czas logu: {summary.total_log_duration:.2f}s łącznie, "
+                            f"średnio {summary.average_log_duration:.2f}s"
+                        )
+                        if summary.median_log_duration is not None:
+                            log_line += f", mediana {summary.median_log_duration:.2f}s"
+                        print(log_line)
+            if tag_stats:
+                print("   tagi scenariuszy:")
+                for tag, summary in tag_stats.items():
+                    print(
+                        "      "
+                        f"#{tag}: {summary.successful_runs}/{summary.total_runs} udanych, "
+                        f"ostatni wynik {summary.last_status}"
+                    )
+                    tag_duration_parts: list[str] = []
+                    if summary.average_duration is not None:
+                        tag_duration_parts.append(f"średnio {summary.average_duration:.2f}s")
+                    if summary.median_duration is not None:
+                        tag_duration_parts.append(f"mediana {summary.median_duration:.2f}s")
+                    if summary.p90_duration is not None:
+                        tag_duration_parts.append(f"p90 {summary.p90_duration:.2f}s")
+                    if tag_duration_parts:
+                        print("         czasy: " + ", ".join(tag_duration_parts))
+                    if summary.retries:
+                        print(
+                            "         "
+                            f"ponowień: {summary.retries}, sukcesów po ponowieniu: {summary.flaky_successes}"
+                        )
+                    if summary.failure_categories:
+                        tag_failures = ", ".join(
+                            f"{category}: {count}"
+                            for category, count in sorted(summary.failure_categories.items())
+                        )
+                        print(f"         błędy: {tag_failures}")
+                    if summary.scenario_counts:
+                        scenario_overview = ", ".join(
+                            f"{scenario}: {count}"
+                            for scenario, count in summary.scenario_counts.items()
+                        )
+                        print(f"         scenariusze: {scenario_overview}")
+                    if summary.total_commands:
+                        print(
+                            "         "
+                            f"komendy: łącznie {summary.total_commands}, unikalnych {summary.unique_commands}"
+                        )
+                        if summary.top_commands:
+                            top_preview = ", ".join(
+                                f"{command} ({count})"
+                                for command, count in summary.top_commands
+                            )
+                            print(f"         najczęstsze: {top_preview}")
+                    if summary.total_actions:
+                        action_line = (
+                            "         "
+                            f"akcje: łącznie {summary.total_actions}"
+                        )
+                        if summary.screenshot_actions:
+                            action_line += (
+                                f", screenshoty {summary.screenshot_actions}"
+                            )
+                        if summary.captured_screenshots:
+                            action_line += (
+                                f", zapisane pliki {summary.captured_screenshots}"
+                            )
+                        print(action_line)
+                        action_breakdown = sorted(
+                            summary.action_types.items(),
+                            key=lambda item: (-item[1], item[0]),
+                        )
+                        if action_breakdown:
+                            action_preview = ", ".join(
+                                f"{action} ({count})"
+                                for action, count in action_breakdown[:5]
+                            )
+                            print(f"         najczęstsze akcje: {action_preview}")
+                    if summary.total_wait_time > 0:
+                        print(
+                            "         "
+                            f"czas oczekiwania: {summary.total_wait_time:.2f}s"
+                        )
+
             if args.bot_report_json is not None:
                 report_path = args.bot_report_json
                 if not report_path.is_absolute():
                     report_path = package_root / report_path
                 report_path.parent.mkdir(parents=True, exist_ok=True)
-                summary = {
-                    "total": len(results),
-                    "passed": sum(1 for entry in results if entry.is_successful()),
-                    "failed": sum(1 for entry in results if not entry.is_successful()),
-                    "assertion_failures": sum(
-                        1
-                        for entry in report_entries
-                        for assertion in entry.get("assertions", [])
-                        if not assertion.get("passed")
-                    ),
+                summary = stats.as_dict()
+                summary["per_scenario"] = {
+                    description: scenario.as_dict()
+                    for description, scenario in scenario_stats.items()
                 }
+                summary["per_client"] = {
+                    name: client.as_dict() for name, client in client_stats.items()
+                }
+                summary["per_tag"] = {tag: tag_summary.as_dict() for tag, tag_summary in tag_stats.items()}
                 payload = {
                     "generated_gamemode": str(generated_path),
                     "package_dir": str(package_dir),

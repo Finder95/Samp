@@ -2,13 +2,18 @@
 from __future__ import annotations
 
 import json
+import math
+from collections import Counter
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 import re
 from pathlib import Path
+import statistics
 import subprocess
 import time
 from typing import Iterable, Mapping, Protocol, Sequence
+
+from .slug import slugify_description
 
 
 class BotClient(Protocol):
@@ -314,6 +319,7 @@ class TestRunResult:
 
     script: BotScript
     client_results: tuple[ClientRunResult, ...]
+    tags: tuple[str, ...] = ()
     log_expectations: tuple[LogExpectationResult, ...] = ()
     client_log_expectations: tuple[ClientLogExpectationResult, ...] = ()
     server_log_excerpt: str | None = None
@@ -341,6 +347,234 @@ class TestRunResult:
 
     def status_label(self) -> str:
         return "SUCCESS" if self.is_successful() else "FAILED"
+
+
+@dataclass(slots=True)
+class SuiteStatistics:
+    """Aggregate view of a batch of orchestrated test runs."""
+
+    total_runs: int
+    successful_runs: int
+    failed_runs: int
+    success_rate: float | None
+    total_duration: float
+    average_duration: float | None
+    median_duration: float | None
+    p90_duration: float | None
+    shortest_duration: float | None
+    longest_duration: float | None
+    assertion_failures: int
+    log_expectation_failures: int
+    client_log_expectation_failures: int
+    failure_categories: dict[str, int]
+    total_commands: int
+    unique_commands: int
+    top_commands: tuple[tuple[str, int], ...]
+    command_usage: dict[str, int]
+    total_actions: int
+    action_types: dict[str, int]
+    screenshot_actions: int
+    captured_screenshots: int
+    total_wait_time: float
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "total": self.total_runs,
+            "passed": self.successful_runs,
+            "failed": self.failed_runs,
+            "success_rate": self.success_rate,
+            "total_duration": self.total_duration,
+            "average_duration": self.average_duration,
+            "median_duration": self.median_duration,
+            "p90_duration": self.p90_duration,
+            "shortest_duration": self.shortest_duration,
+            "longest_duration": self.longest_duration,
+            "assertion_failures": self.assertion_failures,
+            "log_expectation_failures": self.log_expectation_failures,
+            "client_log_expectation_failures": self.client_log_expectation_failures,
+            "failure_categories": dict(self.failure_categories),
+            "total_commands": self.total_commands,
+            "unique_commands": self.unique_commands,
+            "top_commands": [
+                {"command": command, "count": count}
+                for command, count in self.top_commands
+            ],
+            "command_usage": dict(self.command_usage),
+            "total_actions": self.total_actions,
+            "action_types": dict(self.action_types),
+            "screenshot_actions": self.screenshot_actions,
+            "captured_screenshots": self.captured_screenshots,
+            "total_wait_time": self.total_wait_time,
+        }
+
+
+@dataclass(slots=True)
+class ScenarioStatistics:
+    """Aggregate statistics for runs of an individual scenario."""
+
+    description: str
+    total_runs: int
+    successful_runs: int
+    failed_runs: int
+    retries: int
+    flaky_successes: int
+    total_duration: float
+    average_duration: float | None
+    median_duration: float | None
+    p90_duration: float | None
+    last_status: str
+    failure_categories: dict[str, int]
+    total_commands: int
+    unique_commands: int
+    top_commands: tuple[tuple[str, int], ...]
+    command_usage: dict[str, int]
+    total_actions: int
+    action_types: dict[str, int]
+    screenshot_actions: int
+    captured_screenshots: int
+    total_wait_time: float
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "description": self.description,
+            "total": self.total_runs,
+            "passed": self.successful_runs,
+            "failed": self.failed_runs,
+            "retries": self.retries,
+            "flaky_successes": self.flaky_successes,
+            "total_duration": self.total_duration,
+            "average_duration": self.average_duration,
+            "median_duration": self.median_duration,
+            "p90_duration": self.p90_duration,
+            "last_status": self.last_status,
+            "failure_categories": dict(self.failure_categories),
+            "total_commands": self.total_commands,
+            "unique_commands": self.unique_commands,
+            "top_commands": [
+                {"command": command, "count": count}
+                for command, count in self.top_commands
+            ],
+            "command_usage": dict(self.command_usage),
+            "total_actions": self.total_actions,
+            "action_types": dict(self.action_types),
+            "screenshot_actions": self.screenshot_actions,
+            "captured_screenshots": self.captured_screenshots,
+            "total_wait_time": self.total_wait_time,
+        }
+
+
+@dataclass(slots=True)
+class ClientStatistics:
+    """Aggregate statistics for runs executed by a specific client."""
+
+    name: str
+    total_runs: int
+    successful_runs: int
+    failed_runs: int
+    runs_with_logs: int
+    total_commands: int
+    average_commands: float | None
+    median_commands: float | None
+    total_log_duration: float
+    average_log_duration: float | None
+    median_log_duration: float | None
+    last_status: str
+    unique_commands: int
+    top_commands: tuple[tuple[str, int], ...]
+    command_usage: dict[str, int]
+    total_actions: int
+    average_actions: float | None
+    median_actions: float | None
+    action_types: dict[str, int]
+    screenshot_actions: int
+    captured_screenshots: int
+    total_wait_time: float
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "client": self.name,
+            "total": self.total_runs,
+            "passed": self.successful_runs,
+            "failed": self.failed_runs,
+            "runs_with_logs": self.runs_with_logs,
+            "total_commands": self.total_commands,
+            "average_commands": self.average_commands,
+            "median_commands": self.median_commands,
+            "total_log_duration": self.total_log_duration,
+            "average_log_duration": self.average_log_duration,
+            "median_log_duration": self.median_log_duration,
+            "last_status": self.last_status,
+            "unique_commands": self.unique_commands,
+            "top_commands": [
+                {"command": command, "count": count}
+                for command, count in self.top_commands
+            ],
+            "command_usage": dict(self.command_usage),
+            "total_actions": self.total_actions,
+            "average_actions": self.average_actions,
+            "median_actions": self.median_actions,
+            "action_types": dict(self.action_types),
+            "screenshot_actions": self.screenshot_actions,
+            "captured_screenshots": self.captured_screenshots,
+            "total_wait_time": self.total_wait_time,
+        }
+
+
+@dataclass(slots=True)
+class TagStatistics:
+    """Aggregate statistics for runs grouped by tag."""
+
+    tag: str
+    total_runs: int
+    successful_runs: int
+    failed_runs: int
+    retries: int
+    flaky_successes: int
+    total_duration: float
+    average_duration: float | None
+    median_duration: float | None
+    p90_duration: float | None
+    last_status: str
+    failure_categories: dict[str, int]
+    scenario_counts: dict[str, int]
+    total_commands: int
+    unique_commands: int
+    top_commands: tuple[tuple[str, int], ...]
+    command_usage: dict[str, int]
+    total_actions: int
+    action_types: dict[str, int]
+    screenshot_actions: int
+    captured_screenshots: int
+    total_wait_time: float
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "tag": self.tag,
+            "total": self.total_runs,
+            "passed": self.successful_runs,
+            "failed": self.failed_runs,
+            "retries": self.retries,
+            "flaky_successes": self.flaky_successes,
+            "total_duration": self.total_duration,
+            "average_duration": self.average_duration,
+            "median_duration": self.median_duration,
+            "p90_duration": self.p90_duration,
+            "last_status": self.last_status,
+            "failure_categories": dict(self.failure_categories),
+            "scenario_counts": dict(self.scenario_counts),
+            "total_commands": self.total_commands,
+            "unique_commands": self.unique_commands,
+            "top_commands": [
+                {"command": command, "count": count}
+                for command, count in self.top_commands
+            ],
+            "command_usage": dict(self.command_usage),
+            "total_actions": self.total_actions,
+            "action_types": dict(self.action_types),
+            "screenshot_actions": self.screenshot_actions,
+            "captured_screenshots": self.captured_screenshots,
+            "total_wait_time": self.total_wait_time,
+        }
 
 
 @dataclass(slots=True)
@@ -473,9 +707,14 @@ class TestOrchestrator:
 
     def register_script(self, script: BotScript) -> Path:
         """Persist script to disk for inspection or reuse."""
-        target = self.scripts_dir / f"{script.description.replace(' ', '_')}.json"
-        target.write_text(script.to_json(), encoding="utf-8")
-        return target
+        base_name = slugify_description(script.description)
+        candidate = self.scripts_dir / f"{base_name}.json"
+        suffix = 1
+        while candidate.exists():
+            candidate = self.scripts_dir / f"{base_name}_{suffix}.json"
+            suffix += 1
+        candidate.write_text(script.to_json(), encoding="utf-8")
+        return candidate
 
     def _select_clients(self, client_names: Sequence[str] | None) -> list[BotClient]:
         if not client_names:
@@ -839,6 +1078,7 @@ class TestOrchestrator:
         attempt_index: int = 1,
         iteration_index: int = 0,
         assertions: Sequence[RunAssertionRule] | None = None,
+        tags: Sequence[str] | None = None,
     ) -> TestRunResult:
         """Run the script across all configured clients."""
 
@@ -874,6 +1114,7 @@ class TestOrchestrator:
             return TestRunResult(
                 script=script,
                 client_results=tuple(results),
+                tags=tuple(tags or ()),
                 log_expectations=log_expectations,
                 client_log_expectations=client_log_results,
                 server_log_excerpt=server_log_excerpt,
@@ -925,6 +1166,7 @@ class TestOrchestrator:
         return TestRunResult(
             script=script,
             client_results=tuple(results),
+            tags=tuple(tags or ()),
             log_expectations=log_expectations,
             client_log_expectations=client_log_results,
             server_log_excerpt=server_log_excerpt,
@@ -938,6 +1180,403 @@ class TestOrchestrator:
             failures=tuple(failures),
             assertions=assertion_results,
         )
+
+    @staticmethod
+    def _percentile(sorted_values: Sequence[float], percentile: float) -> float:
+        if not sorted_values:
+            return 0.0
+        if percentile <= 0:
+            return float(sorted_values[0])
+        if percentile >= 1:
+            return float(sorted_values[-1])
+        index = max(0, min(len(sorted_values) - 1, math.ceil(percentile * len(sorted_values)) - 1))
+        return float(sorted_values[index])
+
+    @staticmethod
+    def _duration_statistics(
+        durations: Sequence[float],
+    ) -> tuple[
+        float,
+        float | None,
+        float | None,
+        float | None,
+        float | None,
+        float | None,
+    ]:
+        if not durations:
+            return 0.0, None, None, None, None, None
+        ordered = sorted(float(value) for value in durations)
+        total = float(sum(ordered))
+        average = total / len(ordered) if ordered else None
+        median = float(statistics.median(ordered)) if ordered else None
+        p90 = (
+            float(TestOrchestrator._percentile(ordered, 0.9))
+            if len(ordered) > 1
+            else float(ordered[0])
+        )
+        shortest = float(ordered[0])
+        longest = float(ordered[-1])
+        return total, average, median, p90, shortest, longest
+
+    @staticmethod
+    def _command_summary(
+        logs: Iterable[PlaybackLog],
+        limit: int = 5,
+    ) -> tuple[int, int, dict[str, int], tuple[tuple[str, int], ...]]:
+        counter: Counter[str] = Counter()
+        for log in logs:
+            for payload in log.commands_sent():
+                if payload:
+                    counter[payload] += 1
+        total_commands = int(sum(counter.values()))
+        unique_commands = len(counter)
+        sorted_by_frequency = sorted(
+            counter.items(), key=lambda item: (-item[1], item[0])
+        )
+        top_commands: tuple[tuple[str, int], ...] = tuple(sorted_by_frequency[:limit])
+        ordered_usage = dict(sorted(counter.items()))
+        return total_commands, unique_commands, ordered_usage, top_commands
+
+    @staticmethod
+    def _action_summary(
+        logs: Iterable[PlaybackLog],
+    ) -> tuple[int, dict[str, int], int, float]:
+        counter: Counter[str] = Counter()
+        screenshot_actions = 0
+        total_wait_time = 0.0
+        for log in logs:
+            for event in log.events:
+                action_type = event.action.type
+                counter[action_type] += 1
+                if action_type == "screenshot":
+                    screenshot_actions += 1
+                if action_type == "wait":
+                    total_wait_time += float(event.duration or 0.0)
+        total_actions = int(sum(counter.values()))
+        action_types = dict(sorted(counter.items()))
+        return total_actions, action_types, screenshot_actions, float(total_wait_time)
+
+    @staticmethod
+    def summarise_results(results: Sequence[TestRunResult]) -> SuiteStatistics:
+        """Compute aggregate statistics for a collection of test runs."""
+
+        total_runs = len(results)
+        successful_runs = sum(1 for result in results if result.is_successful())
+        durations = [float(result.duration) for result in results if result.duration is not None]
+        (
+            total_duration,
+            average_duration,
+            median_duration,
+            p90_duration,
+            shortest_duration,
+            longest_duration,
+        ) = TestOrchestrator._duration_statistics(durations)
+        success_rate = (successful_runs / total_runs) if total_runs else None
+        assertion_failures = sum(
+            1 for result in results for assertion in result.assertions if not assertion.passed
+        )
+        log_expectation_failures = sum(
+            1 for result in results if not result.logs_satisfied()
+        )
+        client_log_expectation_failures = sum(
+            1 for result in results if not result.client_logs_satisfied()
+        )
+        category_counts: Counter[str] = Counter()
+        for result in results:
+            for failure in result.failures:
+                category_counts[failure.category] += 1
+        all_logs = [
+            client.log
+            for result in results
+            for client in result.client_results
+            if client.log is not None
+        ]
+        (
+            total_commands,
+            unique_commands,
+            command_usage,
+            top_commands,
+        ) = TestOrchestrator._command_summary(all_logs)
+        (
+            total_actions,
+            action_types,
+            screenshot_actions,
+            total_wait_time,
+        ) = TestOrchestrator._action_summary(all_logs)
+        captured_screenshots = sum(
+            len(client.screenshots)
+            for result in results
+            for client in result.client_results
+        )
+        return SuiteStatistics(
+            total_runs=total_runs,
+            successful_runs=successful_runs,
+            failed_runs=total_runs - successful_runs,
+            success_rate=success_rate,
+            total_duration=total_duration,
+            average_duration=average_duration,
+            median_duration=median_duration,
+            p90_duration=p90_duration,
+            shortest_duration=shortest_duration,
+            longest_duration=longest_duration,
+            assertion_failures=assertion_failures,
+            log_expectation_failures=log_expectation_failures,
+            client_log_expectation_failures=client_log_expectation_failures,
+            failure_categories=dict(category_counts),
+            total_commands=total_commands,
+            unique_commands=unique_commands,
+            top_commands=top_commands,
+            command_usage=command_usage,
+            total_actions=total_actions,
+            action_types=action_types,
+            screenshot_actions=screenshot_actions,
+            captured_screenshots=captured_screenshots,
+            total_wait_time=total_wait_time,
+        )
+
+    @staticmethod
+    def summarise_per_script(
+        results: Sequence[TestRunResult],
+    ) -> dict[str, ScenarioStatistics]:
+        """Compute per-scenario statistics for a sequence of run results."""
+
+        grouped: dict[str, list[TestRunResult]] = {}
+        for result in results:
+            description = (result.script.description or "").strip() or "scenario"
+            grouped.setdefault(description, []).append(result)
+
+        summaries: dict[str, ScenarioStatistics] = {}
+        for description in sorted(grouped):
+            runs = grouped[description]
+            total_runs = len(runs)
+            successful_runs = sum(1 for run in runs if run.is_successful())
+            durations = [float(run.duration) for run in runs if run.duration is not None]
+            (
+                total_duration,
+                average_duration,
+                median_duration,
+                p90_duration,
+                _shortest,
+                _longest,
+            ) = TestOrchestrator._duration_statistics(durations)
+            retries = sum(1 for run in runs if run.attempt_index > 1)
+            flaky_successes = sum(
+                1 for run in runs if run.attempt_index > 1 and run.is_successful()
+            )
+            category_counts: Counter[str] = Counter()
+            logs = [
+                client.log
+                for run in runs
+                for client in run.client_results
+                if client.log is not None
+            ]
+            (
+                total_commands,
+                unique_commands,
+                command_usage,
+                top_commands,
+            ) = TestOrchestrator._command_summary(logs)
+            (
+                total_actions,
+                action_types,
+                screenshot_actions,
+                total_wait_time,
+            ) = TestOrchestrator._action_summary(logs)
+            captured_screenshots = sum(
+                len(client.screenshots)
+                for run in runs
+                for client in run.client_results
+            )
+            for run in runs:
+                for failure in run.failures:
+                    category_counts[failure.category] += 1
+            summaries[description] = ScenarioStatistics(
+                description=description,
+                total_runs=total_runs,
+                successful_runs=successful_runs,
+                failed_runs=total_runs - successful_runs,
+                retries=retries,
+                flaky_successes=flaky_successes,
+                total_duration=total_duration,
+                average_duration=average_duration,
+                median_duration=median_duration,
+                p90_duration=p90_duration,
+                last_status=runs[-1].status_label(),
+                failure_categories=dict(category_counts),
+                total_commands=total_commands,
+                unique_commands=unique_commands,
+                top_commands=top_commands,
+                command_usage=command_usage,
+                total_actions=total_actions,
+                action_types=action_types,
+                screenshot_actions=screenshot_actions,
+                captured_screenshots=captured_screenshots,
+                total_wait_time=total_wait_time,
+            )
+        return summaries
+
+    @staticmethod
+    def summarise_per_client(
+        results: Sequence[TestRunResult],
+    ) -> dict[str, ClientStatistics]:
+        """Compute per-client statistics for a sequence of run results."""
+
+        grouped: dict[str, list[tuple[TestRunResult, ClientRunResult]]] = {}
+        for result in results:
+            for client_result in result.client_results:
+                grouped.setdefault(client_result.client_name, []).append((result, client_result))
+
+        summaries: dict[str, ClientStatistics] = {}
+        for name in sorted(grouped):
+            entries = grouped[name]
+            total_runs = len(entries)
+            successful_runs = sum(1 for run, _ in entries if run.is_successful())
+            runs_with_logs = sum(1 for _, client in entries if client.log is not None)
+            logs = [client.log for _, client in entries if client.log is not None]
+            command_counts = [float(log.command_count()) for log in logs]
+            (
+                total_commands,
+                unique_commands,
+                command_usage,
+                top_commands,
+            ) = TestOrchestrator._command_summary(logs)
+            median_commands = float(statistics.median(command_counts)) if command_counts else None
+            average_commands = (total_commands / runs_with_logs) if runs_with_logs else None
+            (
+                total_actions,
+                action_types,
+                screenshot_actions,
+                total_wait_time,
+            ) = TestOrchestrator._action_summary(logs)
+            action_event_counts = [len(log.events) for log in logs]
+            median_actions = (
+                float(statistics.median(action_event_counts))
+                if action_event_counts
+                else None
+            )
+            average_actions = (total_actions / runs_with_logs) if runs_with_logs else None
+            durations = [float(log.total_duration()) for log in logs]
+            (
+                total_log_duration,
+                average_log_duration,
+                median_log_duration,
+                _p90_log_duration,
+                _shortest_log,
+                _longest_log,
+            ) = TestOrchestrator._duration_statistics(durations)
+            captured_screenshots = sum(
+                len(client.screenshots) for _, client in entries
+            )
+            summaries[name] = ClientStatistics(
+                name=name,
+                total_runs=total_runs,
+                successful_runs=successful_runs,
+                failed_runs=total_runs - successful_runs,
+                runs_with_logs=runs_with_logs,
+                total_commands=total_commands,
+                average_commands=average_commands,
+                median_commands=median_commands,
+                total_log_duration=total_log_duration,
+                average_log_duration=average_log_duration,
+                median_log_duration=median_log_duration,
+                last_status=entries[-1][0].status_label(),
+                unique_commands=unique_commands,
+                top_commands=top_commands,
+                command_usage=command_usage,
+                total_actions=total_actions,
+                average_actions=average_actions,
+                median_actions=median_actions,
+                action_types=action_types,
+                screenshot_actions=screenshot_actions,
+                captured_screenshots=captured_screenshots,
+                total_wait_time=total_wait_time,
+            )
+        return summaries
+
+    @staticmethod
+    def summarise_per_tag(
+        results: Sequence[TestRunResult],
+    ) -> dict[str, TagStatistics]:
+        """Compute per-tag statistics for a sequence of run results."""
+
+        grouped: dict[str, list[TestRunResult]] = {}
+        for result in results:
+            for tag in result.tags:
+                grouped.setdefault(tag, []).append(result)
+
+        summaries: dict[str, TagStatistics] = {}
+        for tag in sorted(grouped):
+            runs = grouped[tag]
+            total_runs = len(runs)
+            successful_runs = sum(1 for run in runs if run.is_successful())
+            durations = [float(run.duration) for run in runs if run.duration is not None]
+            (
+                total_duration,
+                average_duration,
+                median_duration,
+                p90_duration,
+                _shortest,
+                _longest,
+            ) = TestOrchestrator._duration_statistics(durations)
+            retries = sum(1 for run in runs if run.attempt_index > 1)
+            flaky_successes = sum(
+                1 for run in runs if run.attempt_index > 1 and run.is_successful()
+            )
+            category_counts: Counter[str] = Counter()
+            scenario_counts: Counter[str] = Counter()
+            logs = [
+                client.log
+                for run in runs
+                for client in run.client_results
+                if client.log is not None
+            ]
+            (
+                total_commands,
+                unique_commands,
+                command_usage,
+                top_commands,
+            ) = TestOrchestrator._command_summary(logs)
+            (
+                total_actions,
+                action_types,
+                screenshot_actions,
+                total_wait_time,
+            ) = TestOrchestrator._action_summary(logs)
+            captured_screenshots = sum(
+                len(client.screenshots)
+                for run in runs
+                for client in run.client_results
+            )
+            for run in runs:
+                scenario_description = (run.script.description or "").strip() or "scenario"
+                scenario_counts[scenario_description] += 1
+                for failure in run.failures:
+                    category_counts[failure.category] += 1
+            summaries[tag] = TagStatistics(
+                tag=tag,
+                total_runs=total_runs,
+                successful_runs=successful_runs,
+                failed_runs=total_runs - successful_runs,
+                retries=retries,
+                flaky_successes=flaky_successes,
+                total_duration=total_duration,
+                average_duration=average_duration,
+                median_duration=median_duration,
+                p90_duration=p90_duration,
+                last_status=runs[-1].status_label(),
+                failure_categories=dict(category_counts),
+                scenario_counts=dict(sorted(scenario_counts.items())),
+                total_commands=total_commands,
+                unique_commands=unique_commands,
+                top_commands=top_commands,
+                command_usage=command_usage,
+                total_actions=total_actions,
+                action_types=action_types,
+                screenshot_actions=screenshot_actions,
+                captured_screenshots=captured_screenshots,
+                total_wait_time=total_wait_time,
+            )
+        return summaries
 
     def run_suite(
         self,
@@ -972,6 +1611,7 @@ class TestOrchestrator:
                         attempt_index=attempt,
                         iteration_index=iteration,
                         assertions=run.assertions,
+                        tags=run.tags,
                     )
                     results.append(result)
                     if result.is_successful():
@@ -994,6 +1634,10 @@ class TestOrchestrator:
 
 
 TestOrchestrator.__test__ = False  # type: ignore[attr-defined]
+TestRunResult.__test__ = False  # type: ignore[attr-defined]
+SuiteStatistics.__test__ = False  # type: ignore[attr-defined]
+ClientStatistics.__test__ = False  # type: ignore[attr-defined]
+TagStatistics.__test__ = False  # type: ignore[attr-defined]
 
 
 __all__ = [
@@ -1013,6 +1657,10 @@ __all__ = [
     "ClientLogExportResult",
     "ClientRunResult",
     "TestRunResult",
+    "SuiteStatistics",
+    "ScenarioStatistics",
+    "ClientStatistics",
+    "TagStatistics",
     "BotRunContext",
     "RunAssertionRule",
     "RunAssertionResult",

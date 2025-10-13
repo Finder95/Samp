@@ -155,6 +155,13 @@ Konfiguracja `bot_automation` może teraz oznaczać przebiegi tagami (`tags`), o
 ponowień (`retries`), przerwy między próbami (`grace_period`) oraz włączać/wyłączać pojedyncze
 scenariusze (`enabled`).
 
+Podsumowania suity, scenariuszy, klientów i tagów obejmują także szczegółową analitykę akcji
+wykonanych przez boty. CLI i raport JSON prezentują łączną liczbę akcji, rozbicie według typów,
+liczbę wywołań screenshotów, faktycznie zapisane pliki oraz skumulowany czas oczekiwania na
+akcje `wait`. Dzięki temu łatwo ocenić, które scenariusze lub klienci generują najwięcej
+interakcji, gdzie pojawiają się długie pauzy oraz jakie makra wizualne rejestrowały materiał
+debugowy.
+
 CLI udostępnia dodatkowe przełączniki wspierające pełną automatyzację (`--xdotool-binary`,
 `--bot-focus-window`, `--bot-window-title`, `--bot-record-playback-dir`,
 `--bot-server-log-dir`, `--bot-client-log-dir`, `--bot-only`, `--bot-skip`,
