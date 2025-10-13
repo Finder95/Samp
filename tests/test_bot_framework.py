@@ -26,6 +26,7 @@ from tools.autorp.tester import (
     RunFailure,
     RunAssertionResult,
     RunAssertionRule,
+    ScenarioStatistics,
     ServerLogExpectation,
     ServerLogMonitor,
     TestOrchestrator,
@@ -658,6 +659,7 @@ def test_orchestrator_summarise_results_compiles_statistics():
     assert stats.total_runs == 2
     assert stats.successful_runs == 1
     assert stats.failed_runs == 1
+    assert stats.success_rate == 0.5
     assert stats.total_duration == 7.5
     assert stats.average_duration == 3.75
     assert stats.shortest_duration == 2.5
@@ -666,3 +668,46 @@ def test_orchestrator_summarise_results_compiles_statistics():
     assert stats.log_expectation_failures == 1
     assert stats.client_log_expectation_failures == 1
     assert stats.failure_categories == {"assertion": 1}
+
+
+def test_orchestrator_summarise_per_script_groups_attempts():
+    primary_script = BotScript(description="Retry Demo")
+    attempt_one = TestRunResult(
+        script=primary_script,
+        client_results=(ClientRunResult(client_name="alpha", log=None),),
+        attempt_index=1,
+        duration=3.0,
+        failures=(
+            RunFailure(category="network", subject="connect", message="timeout"),
+        ),
+    )
+    attempt_two = TestRunResult(
+        script=primary_script,
+        client_results=(ClientRunResult(client_name="alpha", log=None),),
+        attempt_index=2,
+        duration=4.0,
+    )
+    other = TestRunResult(
+        script=BotScript(description="Stable"),
+        client_results=(ClientRunResult(client_name="beta", log=None),),
+        duration=2.0,
+    )
+
+    summaries = TestOrchestrator.summarise_per_script([attempt_one, attempt_two, other])
+    assert set(summaries) == {"Retry Demo", "Stable"}
+    retry_stats = summaries["Retry Demo"]
+    assert isinstance(retry_stats, ScenarioStatistics)
+    assert retry_stats.total_runs == 2
+    assert retry_stats.successful_runs == 1
+    assert retry_stats.failed_runs == 1
+    assert retry_stats.retries == 1
+    assert retry_stats.flaky_successes == 1
+    assert retry_stats.total_duration == 7.0
+    assert retry_stats.average_duration == 3.5
+    assert retry_stats.last_status == "SUCCESS"
+    assert retry_stats.failure_categories == {"network": 1}
+
+    stable_stats = summaries["Stable"]
+    assert stable_stats.total_runs == 1
+    assert stable_stats.retries == 0
+    assert stable_stats.failure_categories == {}

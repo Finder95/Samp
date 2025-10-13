@@ -636,10 +636,13 @@ def main(argv: list[str] | None = None) -> Path:
                 print("---")
 
             stats = TestOrchestrator.summarise_results(results)
+            scenario_stats = TestOrchestrator.summarise_per_script(results)
             print(
                 "Podsumowanie: "
                 f"{stats.successful_runs}/{stats.total_runs} scenariuszy zakończonych sukcesem"
             )
+            if stats.success_rate is not None:
+                print(f"   skuteczność: {stats.success_rate * 100:.1f}%")
             if stats.average_duration is not None:
                 print(
                     "   czasy: średni "
@@ -651,6 +654,30 @@ def main(argv: list[str] | None = None) -> Path:
                     f"{category}: {count}" for category, count in sorted(stats.failure_categories.items())
                 )
                 print(f"   kategorie błędów: {details}")
+            interesting_scenarios = [
+                (description, summary)
+                for description, summary in scenario_stats.items()
+                if summary.failed_runs or summary.retries
+            ]
+            if interesting_scenarios:
+                print("   szczegóły scenariuszy:")
+                for description, summary in interesting_scenarios:
+                    print(
+                        "      "
+                        f"{description}: {summary.successful_runs}/{summary.total_runs} udanych, "
+                        f"ostatni wynik {summary.last_status}"
+                    )
+                    if summary.retries:
+                        print(
+                            "         "
+                            f"ponowień: {summary.retries}, sukcesów po ponowieniu: {summary.flaky_successes}"
+                        )
+                    if summary.failure_categories:
+                        scenario_details = ", ".join(
+                            f"{category}: {count}"
+                            for category, count in sorted(summary.failure_categories.items())
+                        )
+                        print(f"         błędy: {scenario_details}")
 
             if args.bot_report_json is not None:
                 report_path = args.bot_report_json
@@ -658,6 +685,10 @@ def main(argv: list[str] | None = None) -> Path:
                     report_path = package_root / report_path
                 report_path.parent.mkdir(parents=True, exist_ok=True)
                 summary = stats.as_dict()
+                summary["per_scenario"] = {
+                    description: scenario.as_dict()
+                    for description, scenario in scenario_stats.items()
+                }
                 payload = {
                     "generated_gamemode": str(generated_path),
                     "package_dir": str(package_dir),

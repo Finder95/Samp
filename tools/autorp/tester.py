@@ -353,6 +353,7 @@ class SuiteStatistics:
     total_runs: int
     successful_runs: int
     failed_runs: int
+    success_rate: float | None
     total_duration: float
     average_duration: float | None
     shortest_duration: float | None
@@ -367,6 +368,7 @@ class SuiteStatistics:
             "total": self.total_runs,
             "passed": self.successful_runs,
             "failed": self.failed_runs,
+            "success_rate": self.success_rate,
             "total_duration": self.total_duration,
             "average_duration": self.average_duration,
             "shortest_duration": self.shortest_duration,
@@ -374,6 +376,36 @@ class SuiteStatistics:
             "assertion_failures": self.assertion_failures,
             "log_expectation_failures": self.log_expectation_failures,
             "client_log_expectation_failures": self.client_log_expectation_failures,
+            "failure_categories": dict(self.failure_categories),
+        }
+
+
+@dataclass(slots=True)
+class ScenarioStatistics:
+    """Aggregate statistics for runs of an individual scenario."""
+
+    description: str
+    total_runs: int
+    successful_runs: int
+    failed_runs: int
+    retries: int
+    flaky_successes: int
+    total_duration: float
+    average_duration: float | None
+    last_status: str
+    failure_categories: dict[str, int]
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "description": self.description,
+            "total": self.total_runs,
+            "passed": self.successful_runs,
+            "failed": self.failed_runs,
+            "retries": self.retries,
+            "flaky_successes": self.flaky_successes,
+            "total_duration": self.total_duration,
+            "average_duration": self.average_duration,
+            "last_status": self.last_status,
             "failure_categories": dict(self.failure_categories),
         }
 
@@ -990,6 +1022,7 @@ class TestOrchestrator:
         shortest_duration = min(durations) if durations else None
         longest_duration = max(durations) if durations else None
         average_duration = (total_duration / len(durations)) if durations else None
+        success_rate = (successful_runs / total_runs) if total_runs else None
         assertion_failures = sum(
             1 for result in results for assertion in result.assertions if not assertion.passed
         )
@@ -1007,6 +1040,7 @@ class TestOrchestrator:
             total_runs=total_runs,
             successful_runs=successful_runs,
             failed_runs=total_runs - successful_runs,
+            success_rate=success_rate,
             total_duration=total_duration,
             average_duration=average_duration,
             shortest_duration=shortest_duration,
@@ -1016,6 +1050,47 @@ class TestOrchestrator:
             client_log_expectation_failures=client_log_expectation_failures,
             failure_categories=dict(category_counts),
         )
+
+    @staticmethod
+    def summarise_per_script(
+        results: Sequence[TestRunResult],
+    ) -> dict[str, ScenarioStatistics]:
+        """Compute per-scenario statistics for a sequence of run results."""
+
+        grouped: dict[str, list[TestRunResult]] = {}
+        for result in results:
+            description = (result.script.description or "").strip() or "scenario"
+            grouped.setdefault(description, []).append(result)
+
+        summaries: dict[str, ScenarioStatistics] = {}
+        for description in sorted(grouped):
+            runs = grouped[description]
+            total_runs = len(runs)
+            successful_runs = sum(1 for run in runs if run.is_successful())
+            durations = [run.duration for run in runs if run.duration is not None]
+            total_duration = float(sum(durations)) if durations else 0.0
+            average_duration = (total_duration / len(durations)) if durations else None
+            retries = sum(1 for run in runs if run.attempt_index > 1)
+            flaky_successes = sum(
+                1 for run in runs if run.attempt_index > 1 and run.is_successful()
+            )
+            category_counts: Counter[str] = Counter()
+            for run in runs:
+                for failure in run.failures:
+                    category_counts[failure.category] += 1
+            summaries[description] = ScenarioStatistics(
+                description=description,
+                total_runs=total_runs,
+                successful_runs=successful_runs,
+                failed_runs=total_runs - successful_runs,
+                retries=retries,
+                flaky_successes=flaky_successes,
+                total_duration=total_duration,
+                average_duration=average_duration,
+                last_status=runs[-1].status_label(),
+                failure_categories=dict(category_counts),
+            )
+        return summaries
 
     def run_suite(
         self,
@@ -1094,6 +1169,7 @@ __all__ = [
     "ClientRunResult",
     "TestRunResult",
     "SuiteStatistics",
+    "ScenarioStatistics",
     "BotRunContext",
     "RunAssertionRule",
     "RunAssertionResult",
