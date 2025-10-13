@@ -81,6 +81,16 @@ def test_action_translator_supports_extended_actions():
             {"type": "config", "name": "sensitivity", "value": 0.5},
             {"type": "key_sequence", "keys": ["f", "enter"], "interval": 0.1},
             {"type": "mouse_scroll", "direction": "up", "steps": 2},
+            {
+                "type": "mouse_drag",
+                "start_x": 1,
+                "start_y": 2,
+                "end_x": 3,
+                "end_y": 4,
+                "duration": 0.05,
+                "hold": 0.02,
+            },
+            {"type": "key_combo", "keys": ["ctrl", "s"], "hold": 0.1},
         ),
     )
     log = runner.run(script)
@@ -102,8 +112,18 @@ def test_action_translator_supports_extended_actions():
         "KEY:ENTER:down",
         "KEY:ENTER:up",
         "MOUSESCROLL:up:2:0",
+        "MOUSE:absolute:1.0:2.0:0.05",
+        "MOUSECLICK:left:down",
+        "WAIT:0.02",
+        "MOUSE:absolute:3.0:4.0:0.05",
+        "MOUSECLICK:left:up",
+        "KEY:CTRL:down",
+        "KEY:S:down",
+        "WAIT:0.1",
+        "KEY:S:up",
+        "KEY:CTRL:up",
     ]
-    assert len(log.events) == 11
+    assert len(log.events) == 13
 
 
 def test_orchestrator_returns_logs(tmp_path):
@@ -115,6 +135,10 @@ def test_orchestrator_returns_logs(tmp_path):
     assert result.successful_clients() == ["dummy"]
     assert transport.buffer == ["/wave"]
     assert result.log_expectations == ()
+    assert result.is_successful()
+    assert result.failures == ()
+    assert result.attempt_index == 1
+    assert result.duration is not None and result.duration >= 0.0
 
 
 def test_wine_client_dry_run(tmp_path):
@@ -231,6 +255,8 @@ def test_orchestrator_client_log_expectations(tmp_path):
     )
     assert result.client_log_expectations
     assert result.client_log_expectations[0].matched is True
+    assert result.failures == ()
+    assert result.is_successful()
 
 
 def test_orchestrator_records_playback_and_screenshots(tmp_path):
@@ -257,6 +283,7 @@ def test_orchestrator_records_playback_and_screenshots(tmp_path):
     assert client_result.playback_log_path is not None
     assert client_result.playback_log_path.exists()
     assert client_result.screenshots == (shot_path,)
+    assert result.is_successful()
 
 
 def test_orchestrator_exports_logs(tmp_path):
@@ -333,6 +360,55 @@ def test_orchestrator_exports_logs(tmp_path):
     assert export_result.target_path is not None and export_result.target_path.exists()
     assert "client ready" in export_result.target_path.read_text(encoding="utf-8")
     assert client_log_path.read_text(encoding="utf-8").strip().endswith("client ready")
+    assert result.is_successful()
+    assert result.failures == ()
+
+
+def test_run_suite_retries_until_success():
+    attempts = {"count": 0}
+    transport = BufferedCommandTransport()
+
+    class FlakyClient(DummyBotClient):
+        def execute_script(self, script: BotScript):  # type: ignore[override]
+            attempts["count"] += 1
+            if attempts["count"] < 2:
+                return None
+            return super().execute_script(script)
+
+    client = FlakyClient(name="flaky", transport=transport)
+    orchestrator = TestOrchestrator(clients=[client])
+    script = BotScript(description="Retry", commands=("/retry",))
+    context = BotRunContext(script=script, max_retries=2)
+    results = orchestrator.run_suite([context], server_address="127.0.0.1:7777")
+    assert len(results) == 2
+    assert results[0].is_successful() is False
+    assert any(failure.category == "client" for failure in results[0].failures)
+    assert results[0].attempt_index == 1
+    assert results[1].is_successful()
+    assert results[1].attempt_index == 2
+
+
+def test_run_suite_fail_fast_breaks_execution(tmp_path):
+    log_path = tmp_path / "client.log"
+    log_path.write_text("", encoding="utf-8")
+    monitor = ClientLogMonitor(client_name="dummy", name="chatlog", log_path=log_path)
+    transport = BufferedCommandTransport()
+    client = DummyBotClient(name="dummy", transport=transport, log_monitors=(monitor,))
+    orchestrator = TestOrchestrator(clients=[client])
+    failing_expectation = ClientLogExpectation(
+        client_name="dummy", phrase="expected", log_name="chatlog", timeout=0.1, poll_interval=0.01
+    )
+    fail_context = BotRunContext(
+        script=BotScript(description="Fail", commands=("/fail",)),
+        client_names=("dummy",),
+        client_log_expectations=(failing_expectation,),
+        fail_fast=True,
+    )
+    ok_context = BotRunContext(script=BotScript(description="OK", commands=("/ok",)))
+    results = orchestrator.run_suite([fail_context, ok_context], server_address="127.0.0.1:7777")
+    assert len(results) == 1
+    assert not results[0].is_successful()
+    assert any(failure.category == "client_log" for failure in results[0].failures)
 
 
 def test_config_bot_plan_contexts():
@@ -375,6 +451,11 @@ def test_config_bot_plan_contexts():
                             "include_full": True,
                         }
                     ],
+                    "tags": ["smoke", "patrol"],
+                    "retries": 2,
+                    "grace_period": 0.75,
+                    "fail_fast": True,
+                    "enabled": True,
                 }
             ],
         },
@@ -394,3 +475,8 @@ def test_config_bot_plan_contexts():
     assert contexts[0].server_log_export == Path("artifacts/server.log")
     assert contexts[0].client_log_exports[0].include_full_log is True
     assert contexts[0].client_log_exports[0].target_path == Path("artifacts/custom.log")
+    assert contexts[0].tags == ("smoke", "patrol")
+    assert contexts[0].max_retries == 2
+    assert contexts[0].grace_period == 0.75
+    assert contexts[0].fail_fast is True
+    assert contexts[0].enabled is True

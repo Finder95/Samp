@@ -108,7 +108,8 @@ Moduł `tools.autorp.bots` zawiera gotowe implementacje klientów:
 - `FileCommandTransport`, `BufferedCommandTransport` oraz `ScriptRunner` – pozwalają tworzyć
   własne integracje z makrami lub CLEO, tłumacząc akcje scenariuszy (`wait`, `chat`,
   `teleport`, `keypress`, `macro`, `wait_for`, `focus_window`, `type_text`, `mouse_move`,
-  `mouse_click`, `mouse_scroll`, `key_sequence`, `screenshot`, `config`, komendy tekstowe)
+  `mouse_click`, `mouse_scroll`, `mouse_drag`, `key_sequence`, `key_combo`, `screenshot`,
+  `config`, komendy tekstowe)
   na rzeczywiste instrukcje, a także raportując przechwycone logi klientów.
 
 `WineWindowInteractor` zapewnia owijarkę na `xdotool`, co pozwala na aktywację okna Wine,
@@ -119,19 +120,29 @@ jeszcze przed wykonaniem właściwego scenariusza, a każda akcja `screenshot` r
 raportu z przebiegu. Nowe ustawienia pozwalają także zebrać fragmenty logów czatu lub innych
 plików dzięki `ClientLogMonitor` oraz zapisać je w katalogach artefaktów.
 
-Każdy przebieg scenariusza zwraca `PlaybackLog` z wysłanymi akcjami i znacznikami czasu.
-Rezultat `TestRunResult` zawiera listę klientów, którzy ukończyli test, status dopasowania
-oczekiwań z logów serwera i logów klienckich oraz – jeśli włączono rejestrowanie – ścieżki do
-zapisanych logów odtworzenia i zebranych zrzutów ekranu. Dodatkowo zapisuje fragment logu
-serwera (oraz opcjonalny plik z eksportem) i listę wyeksportowanych logów klienckich
-zawierających treść przebiegu.
+Każdy przebieg scenariusza zwraca `PlaybackLog` z wysłanymi akcjami, znacznikami czasu oraz
+łączną długością trwania odtworzenia. Rezultat `TestRunResult` zawiera listę klientów, którzy
+ukończyli test, status dopasowania oczekiwań z logów serwera i logów klienckich, dane o próbie
+i iteracji, a także czas trwania przebiegu. Jeśli włączono rejestrowanie, wynik zawiera również
+ścieżki do zapisanych logów odtworzenia, zebrane zrzuty ekranu oraz spójne podsumowanie
+niepowodzeń (`RunFailure`) pogrupowanych według kategorii (klient, log serwera, log klienta).
+Orkiestrator wspiera wielokrotne próby (`max_retries`), okresy wyciszenia przed kolejną próbą
+(`grace_period`), tagowanie przebiegów oraz przerwanie całej suity po pierwszym błędzie
+(`fail_fast`).
+
+Konfiguracja `bot_automation` może teraz oznaczać przebiegi tagami (`tags`), określać liczbę
+ponowień (`retries`), przerwy między próbami (`grace_period`) oraz włączać/wyłączać pojedyncze
+scenariusze (`enabled`).
 
 CLI udostępnia dodatkowe przełączniki wspierające pełną automatyzację (`--xdotool-binary`,
 `--bot-focus-window`, `--bot-window-title`, `--bot-record-playback-dir`,
-`--bot-server-log-dir`, `--bot-client-log-dir`), które można łączyć z definicjami klientów z
-konfiguracji (`logs`, `chatlog`, `setup_actions`, `teardown_actions`, `expect_client_logs`,
-`record_playback_dir`, `wait_before`, `wait_after`, `collect_server_log`,
-`server_log_export`, `export_client_logs`).
+`--bot-server-log-dir`, `--bot-client-log-dir`, `--bot-only`, `--bot-skip`,
+`--bot-retries`, `--bot-grace-period`, `--bot-fail-fast`), które można łączyć z definicjami
+klientów z konfiguracji (`logs`, `chatlog`, `setup_actions`, `teardown_actions`,
+`expect_client_logs`, `record_playback_dir`, `wait_before`, `wait_after`,
+`collect_server_log`, `server_log_export`, `export_client_logs`, `tags`, `retries`,
+`grace_period`, `fail_fast`). Filtry `--bot-only` oraz `--bot-skip` działają na opisy
+scenariuszy (slug/nazwa) oraz przypisane tagi.
 
 ### Testy
 ```bash

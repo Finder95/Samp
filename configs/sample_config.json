@@ -259,6 +259,14 @@
         {"type": "mouse_click", "button": "left"},
         {"type": "key_sequence", "keys": ["f8", "enter"], "interval": 0.2},
         {"type": "mouse_scroll", "direction": "down", "steps": 3},
+        {
+          "type": "mouse_drag",
+          "start": {"x": 620, "y": 420},
+          "end": {"x": 680, "y": 520},
+          "duration": 0.1,
+          "hold": 0.05
+        },
+        {"type": "key_combo", "keys": ["ctrl", "s"], "hold": 0.1},
         {"type": "screenshot", "name": "client_focus", "path": "Test/screenshots/client_focus.png"}
       ]
     }
@@ -323,7 +331,12 @@
             "log": "dummy_chat",
             "target": "Test/logs/patrol_dummy_chat.log"
           }
-        ]
+        ],
+        "tags": ["smoke", "patrol"],
+        "retries": 1,
+        "grace_period": 0.5,
+        "fail_fast": true,
+        "enabled": true
       },
       {
         "scenario": "heist_briefing",
@@ -343,7 +356,12 @@
             "target": "Test/logs/heist_wine_playback.log",
             "include_full": true
           }
-        ]
+        ],
+        "tags": ["heist", "multi-client"],
+        "retries": 0,
+        "grace_period": 0.0,
+        "fail_fast": false,
+        "enabled": true
       },
       {
         "scenario": "client_focus_demo",
@@ -355,7 +373,12 @@
           {"client": "wine_suite", "phrase": "qa_bot", "log": "playback", "timeout": 3.0}
         ],
         "record_playback_dir": "Test/playback/window",
-        "collect_server_log": true
+        "collect_server_log": true,
+        "tags": ["focus", "window"],
+        "retries": 2,
+        "grace_period": 0.25,
+        "fail_fast": false,
+        "enabled": true
       }
     ]
   },

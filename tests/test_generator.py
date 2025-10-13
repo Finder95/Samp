@@ -131,7 +131,10 @@ def test_cli_exports_bot_scripts(tmp_path: Path, monkeypatch):
     assert files, "expected at least one bot script"
     data = read_json(files[0])
     assert "commands" in data
-    assert any(cmd.startswith("/") for cmd in data["commands"])
+    assert "actions" in data
+    commands = [cmd for cmd in data["commands"] if isinstance(cmd, str) and cmd.strip()]
+    actions = [step for step in data["actions"] if isinstance(step, dict)]
+    assert commands or actions, "expected commands or actions in exported script"
 
 
 def test_cli_runs_bot_tests(tmp_path: Path, monkeypatch):

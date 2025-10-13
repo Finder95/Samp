@@ -1750,6 +1750,11 @@ class BotRunDefinition:
     collect_server_log: bool = False
     server_log_export: str | None = None
     export_client_logs: tuple[BotClientLogExportDefinition, ...] = ()
+    tags: tuple[str, ...] = ()
+    retries: int = 0
+    grace_period: float = 0.0
+    fail_fast: bool = False
+    enabled: bool = True
 
     @classmethod
     def from_dict(cls, data: dict) -> "BotRunDefinition":
@@ -1766,6 +1771,7 @@ class BotRunDefinition:
             BotClientLogExportDefinition.from_dict(entry)
             for entry in data.get("export_client_logs", [])
         )
+        tags = tuple(str(tag) for tag in data.get("tags", []))
         return cls(
             scenario=str(scenario_name),
             clients=clients,
@@ -1787,6 +1793,11 @@ class BotRunDefinition:
                 else None
             ),
             export_client_logs=client_log_exports,
+            tags=tags,
+            retries=int(data.get("retries", data.get("max_retries", 0))),
+            grace_period=float(data.get("grace_period", data.get("retry_delay", 0.0))),
+            fail_fast=bool(data.get("fail_fast", False)),
+            enabled=bool(data.get("enabled", data.get("active", True))),
         )
 
 
@@ -1832,6 +1843,11 @@ class BotAutomationPlan:
                     client_log_exports=tuple(
                         export.to_request() for export in run.export_client_logs
                     ),
+                    max_retries=max(0, run.retries),
+                    grace_period=max(0.0, run.grace_period),
+                    fail_fast=run.fail_fast,
+                    tags=run.tags,
+                    enabled=run.enabled,
                 )
             )
         return contexts

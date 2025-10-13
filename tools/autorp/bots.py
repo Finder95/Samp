@@ -222,6 +222,30 @@ class ActionTranslator:
             if text is None:
                 raise ValueError("Brak tekstu dla akcji type_text")
             return (f"{self.type_token}:{text}",)
+        if action.type in {"mouse_drag", "drag_mouse"}:
+            start_payload = action.payload.get("from") or action.payload.get("start") or {}
+            end_payload = action.payload.get("to") or action.payload.get("end") or {}
+            start_x = action.payload.get("start_x", start_payload.get("x"))
+            start_y = action.payload.get("start_y", start_payload.get("y"))
+            end_x = action.payload.get("end_x", end_payload.get("x"))
+            end_y = action.payload.get("end_y", end_payload.get("y"))
+            if start_x is None or start_y is None or end_x is None or end_y is None:
+                raise ValueError("Akcja mouse_drag wymaga pól start_x, start_y, end_x oraz end_y")
+            button = str(action.payload.get("button", "left"))
+            mode = str(action.payload.get("mode", "absolute"))
+            hold = float(action.payload.get("hold", action.payload.get("wait", 0.0)))
+            move_duration = float(action.payload.get("duration", 0.0))
+            payloads = [
+                f"{self.mouse_token}:{mode}:{float(start_x)}:{float(start_y)}:{move_duration}",
+                f"{self.mouse_click_token}:{button}:down",
+            ]
+            if hold > 0:
+                payloads.append(f"{self.wait_token}:{hold}")
+            payloads.append(
+                f"{self.mouse_token}:{mode}:{float(end_x)}:{float(end_y)}:{move_duration}"
+            )
+            payloads.append(f"{self.mouse_click_token}:{button}:up")
+            return tuple(payloads)
         if action.type in {"mouse_move", "mouse"}:
             x = action.payload.get("x")
             y = action.payload.get("y")
@@ -260,6 +284,20 @@ class ActionTranslator:
                 if interval > 0 and index + 1 < len(sequence):
                     payloads.append(f"{self.wait_token}:{interval}")
             return tuple(payloads)
+        if action.type in {"key_combo", "combo"}:
+            combo_keys = action.payload.get("keys") or action.payload.get("combo")
+            if not isinstance(combo_keys, (list, tuple)) or not combo_keys:
+                raise ValueError("Akcja key_combo wymaga listy 'keys'")
+            hold = float(action.payload.get("hold", action.payload.get("wait", 0.0)))
+            payloads: list[str] = []
+            normalised = [str(key).upper() for key in combo_keys]
+            for key in normalised:
+                payloads.append(f"{self.key_token}:{key}:down")
+            if hold > 0:
+                payloads.append(f"{self.wait_token}:{hold}")
+            for key in reversed(normalised):
+                payloads.append(f"{self.key_token}:{key}:up")
+            return tuple(payloads)
         if action.type == "config":
             name = str(action.payload.get("name", action.payload.get("key", "")))
             if not name:
@@ -284,16 +322,21 @@ class ScriptRunner:
     def run(self, script: BotScript) -> PlaybackLog:
         events: list[PlaybackEvent] = []
         for action in script.iter_actions():
+            started_at = time.time()
             payloads = self.translator.translate(action)
             for payload in payloads:
                 self.transport.send(payload)
             self.transport.flush()
             if action.delay > 0:
                 self.sleep(action.delay)
+            finished_at = time.time()
             event = PlaybackEvent(
                 action=action,
                 command_payloads=payloads,
-                timestamp=time.time(),
+                timestamp=started_at,
+                started_at=started_at,
+                finished_at=finished_at,
+                duration=max(0.0, finished_at - started_at),
             )
             if self.on_event is not None:
                 self.on_event(event)

@@ -110,6 +110,9 @@ class PlaybackEvent:
     action: ScriptAction
     command_payloads: tuple[str, ...]
     timestamp: float
+    started_at: float
+    finished_at: float
+    duration: float
 
 
 @dataclass(slots=True)
@@ -132,6 +135,9 @@ class PlaybackLog:
                 "events": [
                     {
                         "timestamp": event.timestamp,
+                        "started_at": event.started_at,
+                        "finished_at": event.finished_at,
+                        "duration": event.duration,
                         "action": event.action.serialise(),
                         "payloads": list(event.command_payloads),
                     }
@@ -139,6 +145,16 @@ class PlaybackLog:
                 ],
             }
         )
+
+    def total_duration(self) -> float:
+        if not self.events:
+            return 0.0
+        return max(event.finished_at for event in self.events) - min(
+            event.started_at for event in self.events
+        )
+
+    def command_count(self) -> int:
+        return sum(len(event.command_payloads) for event in self.events)
 
 
 @dataclass(slots=True)
@@ -168,6 +184,15 @@ class ClientLogExpectationResult:
     log_name: str
     phrase: str
     matched: bool
+
+
+@dataclass(slots=True)
+class RunFailure:
+    """Structured information about a failed assertion during a bot run."""
+
+    category: str
+    subject: str
+    message: str
 
 
 @dataclass(slots=True)
@@ -211,12 +236,27 @@ class TestRunResult:
     server_log_excerpt: str | None = None
     server_log_path: Path | None = None
     client_log_exports: tuple[ClientLogExportResult, ...] = ()
+    attempt_index: int = 1
+    iteration_index: int = 0
+    started_at: float | None = None
+    finished_at: float | None = None
+    duration: float | None = None
+    failures: tuple[RunFailure, ...] = ()
 
     def successful_clients(self) -> list[str]:
         return [result.client_name for result in self.client_results if result.log is not None]
 
     def logs_satisfied(self) -> bool:
         return all(result.matched for result in self.log_expectations)
+
+    def client_logs_satisfied(self) -> bool:
+        return all(result.matched for result in self.client_log_expectations)
+
+    def is_successful(self) -> bool:
+        return not self.failures
+
+    def status_label(self) -> str:
+        return "SUCCESS" if self.is_successful() else "FAILED"
 
 
 @dataclass(slots=True)
@@ -235,6 +275,11 @@ class BotRunContext:
     capture_server_log: bool = False
     server_log_export: Path | None = None
     client_log_exports: tuple[ClientLogExportRequest, ...] = ()
+    max_retries: int = 0
+    grace_period: float = 0.0
+    fail_fast: bool = False
+    tags: tuple[str, ...] = ()
+    enabled: bool = True
 
 
 class SampServerController:
@@ -500,6 +545,42 @@ class TestOrchestrator:
             )
         return tuple(results)
 
+    def _collect_failures(
+        self,
+        client_results: Sequence[ClientRunResult],
+        log_expectations: Sequence[LogExpectationResult],
+        client_log_expectations: Sequence[ClientLogExpectationResult],
+    ) -> list[RunFailure]:
+        failures: list[RunFailure] = []
+        for client_result in client_results:
+            if client_result.log is None:
+                failures.append(
+                    RunFailure(
+                        category="client",
+                        subject=client_result.client_name,
+                        message="Brak logu odtwarzania zwróconego przez klienta",
+                    )
+                )
+        for expectation in log_expectations:
+            if not expectation.matched:
+                failures.append(
+                    RunFailure(
+                        category="server_log",
+                        subject=expectation.phrase,
+                        message="Nie znaleziono oczekiwanej frazy w logu serwera",
+                    )
+                )
+        for expectation in client_log_expectations:
+            if not expectation.matched:
+                failures.append(
+                    RunFailure(
+                        category="client_log",
+                        subject=f"{expectation.client_name}:{expectation.log_name}",
+                        message=f"Brak frazy '{expectation.phrase}' w logu klienta",
+                    )
+                )
+        return failures
+
     def run(
         self,
         script: BotScript,
@@ -512,6 +593,8 @@ class TestOrchestrator:
         capture_server_log: bool = False,
         server_log_export: Path | None = None,
         client_log_exports: Sequence[ClientLogExportRequest] | None = None,
+        attempt_index: int = 1,
+        iteration_index: int = 0,
     ) -> TestRunResult:
         """Run the script across all configured clients."""
 
@@ -523,6 +606,7 @@ class TestOrchestrator:
         client_export_results: tuple[ClientLogExportResult, ...]
         server_log_excerpt: str | None = None
         server_log_path: Path | None = None
+        started_at = time.time()
         if server_address:
             results = self._run_on_clients(
                 server_address, script, selected_clients, record_dir=record_playback_dir
@@ -534,6 +618,8 @@ class TestOrchestrator:
             client_export_results = self._export_client_logs(
                 client_export_requests, client_monitor_lookup
             )
+            finished_at = time.time()
+            failures = self._collect_failures(results, log_expectations, client_log_results)
             return TestRunResult(
                 script=script,
                 client_results=tuple(results),
@@ -542,6 +628,12 @@ class TestOrchestrator:
                 server_log_excerpt=server_log_excerpt,
                 server_log_path=server_log_path,
                 client_log_exports=client_export_results,
+                attempt_index=attempt_index,
+                iteration_index=iteration_index,
+                started_at=started_at,
+                finished_at=finished_at,
+                duration=max(0.0, finished_at - started_at),
+                failures=tuple(failures),
             )
 
         if self.server_controller is None:
@@ -570,6 +662,8 @@ class TestOrchestrator:
                     server_log_export.parent.mkdir(parents=True, exist_ok=True)
                     server_log_export.write_text(excerpt, encoding="utf-8")
                     server_log_path = server_log_export
+        finished_at = time.time()
+        failures = self._collect_failures(results, log_expectations, client_log_results)
         return TestRunResult(
             script=script,
             client_results=tuple(results),
@@ -578,6 +672,12 @@ class TestOrchestrator:
             server_log_excerpt=server_log_excerpt,
             server_log_path=server_log_path,
             client_log_exports=client_export_results,
+            attempt_index=attempt_index,
+            iteration_index=iteration_index,
+            started_at=started_at,
+            finished_at=finished_at,
+            duration=max(0.0, finished_at - started_at),
+            failures=tuple(failures),
         )
 
     def run_suite(
@@ -588,25 +688,48 @@ class TestOrchestrator:
         """Execute a sequence of orchestrated runs, respecting iterations and waits."""
 
         results: list[TestRunResult] = []
+        abort_suite = False
         for run in runs:
-            for iteration in range(max(1, run.iterations)):
+            if not run.enabled:
+                continue
+            iteration_count = max(1, run.iterations)
+            for iteration in range(iteration_count):
                 if run.wait_before > 0 and iteration == 0:
                     time.sleep(run.wait_before)
-                result = self.run(
-                    run.script,
-                    server_address=server_address,
-                    client_names=run.client_names,
-                    expect_server_logs=run.expect_server_logs,
-                    log_timeout=run.log_timeout,
-                    client_log_expectations=run.client_log_expectations,
-                    record_playback_dir=run.record_playback_dir,
-                    capture_server_log=run.capture_server_log,
-                    server_log_export=run.server_log_export,
-                    client_log_exports=run.client_log_exports,
-                )
-                results.append(result)
-                if run.wait_after > 0 and iteration + 1 < run.iterations:
+                max_attempts = max(1, run.max_retries + 1)
+                attempt = 1
+                while attempt <= max_attempts:
+                    result = self.run(
+                        run.script,
+                        server_address=server_address,
+                        client_names=run.client_names,
+                        expect_server_logs=run.expect_server_logs,
+                        log_timeout=run.log_timeout,
+                        client_log_expectations=run.client_log_expectations,
+                        record_playback_dir=run.record_playback_dir,
+                        capture_server_log=run.capture_server_log,
+                        server_log_export=run.server_log_export,
+                        client_log_exports=run.client_log_exports,
+                        attempt_index=attempt,
+                        iteration_index=iteration,
+                    )
+                    results.append(result)
+                    if result.is_successful():
+                        break
+                    if attempt < max_attempts:
+                        if run.grace_period > 0:
+                            time.sleep(run.grace_period)
+                        attempt += 1
+                        continue
+                    if run.fail_fast:
+                        abort_suite = True
+                    break
+                if run.wait_after > 0 and iteration + 1 < iteration_count:
                     time.sleep(run.wait_after)
+                if abort_suite:
+                    break
+            if abort_suite:
+                break
         return results
 
 
@@ -624,6 +747,7 @@ __all__ = [
     "LogExpectationResult",
     "ClientLogExpectation",
     "ClientLogExpectationResult",
+    "RunFailure",
     "ClientLogExportRequest",
     "ClientLogExportResult",
     "ClientRunResult",

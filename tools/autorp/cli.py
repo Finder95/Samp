@@ -119,6 +119,35 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Domyślny katalog eksportu logów klienckich",
     )
+    parser.add_argument(
+        "--bot-only",
+        action="append",
+        default=[],
+        help="Uruchom jedynie scenariusze z podaną nazwą lub tagiem (można powtarzać)",
+    )
+    parser.add_argument(
+        "--bot-skip",
+        action="append",
+        default=[],
+        help="Pomiń scenariusze zawierające nazwę lub tag podany jako argument",
+    )
+    parser.add_argument(
+        "--bot-retries",
+        type=int,
+        default=None,
+        help="Domyślna liczba ponowień scenariusza przy niepowodzeniu",
+    )
+    parser.add_argument(
+        "--bot-grace-period",
+        type=float,
+        default=None,
+        help="Domyślny czas (w sekundach) oczekiwania przed ponowną próbą",
+    )
+    parser.add_argument(
+        "--bot-fail-fast",
+        action="store_true",
+        help="Zatrzymaj suite po pierwszym błędzie scenariusza",
+    )
     return parser.parse_args(argv)
 
 
@@ -299,6 +328,40 @@ def main(argv: list[str] | None = None) -> Path:
                 ]
                 slug = "".join(safe)
                 return slug or "scenario"
+            include_filters = {value.strip().lower() for value in args.bot_only or [] if value}
+            exclude_filters = {value.strip().lower() for value in args.bot_skip or [] if value}
+
+            def _context_tokens(context: BotRunContext) -> set[str]:
+                desc = (context.script.description or "").strip()
+                tokens: set[str] = set()
+                if desc:
+                    lowered = desc.lower()
+                    tokens.add(lowered)
+                    tokens.add(_slugify(desc))
+                tokens.update(tag.lower() for tag in context.tags)
+                return {token for token in tokens if token}
+
+            if include_filters:
+                contexts = [
+                    context for context in contexts if _context_tokens(context) & include_filters
+                ]
+            if exclude_filters:
+                contexts = [
+                    context for context in contexts if not (_context_tokens(context) & exclude_filters)
+                ]
+            if args.bot_retries is not None:
+                for context in contexts:
+                    context.max_retries = max(context.max_retries, args.bot_retries)
+            if args.bot_grace_period is not None:
+                for context in contexts:
+                    if context.grace_period <= 0:
+                        context.grace_period = args.bot_grace_period
+            if args.bot_fail_fast:
+                for context in contexts:
+                    context.fail_fast = True
+            if not contexts:
+                print("Brak scenariuszy botów do uruchomienia po zastosowaniu filtrów")
+                return generated_path
             record_root_arg = args.bot_record_playback_dir
             package_root = package_dir
             for context in contexts:
@@ -365,17 +428,27 @@ def main(argv: list[str] | None = None) -> Path:
             results = orchestrator.run_suite(contexts)
             for result in results:
                 saved_path = registered.get(result.script.description or "scenario")
-                header = f"Uruchomiono scenariusz {result.script.description}"
+                desc = result.script.description or "scenario"
+                status = result.status_label()
+                header = (
+                    f"[{status}] {desc} (iteracja {result.iteration_index + 1}, próba {result.attempt_index})"
+                )
                 if saved_path is not None:
                     header += f" (zapis: {saved_path})"
                 print(header)
+                if result.duration is not None:
+                    print(f"   czas trwania: {result.duration:.2f}s")
                 for client_result in result.client_results:
                     if client_result.log is None:
                         print(f" - {client_result.client_name}: brak logu z przebiegu")
                     else:
                         payloads = client_result.log.commands_sent()
+                        joined_payloads = ", ".join(payloads)
                         print(
-                            f" - {client_result.client_name}: wysłano {len(payloads)} komend ({', '.join(payloads)})"
+                            f" - {client_result.client_name}: wysłano {len(payloads)} komend ({joined_payloads})"
+                        )
+                        print(
+                            f"   czas skryptu: {client_result.log.total_duration():.2f}s / zdarzeń: {len(client_result.log.events)}"
                         )
                         if client_result.playback_log_path is not None:
                             print(
@@ -384,6 +457,13 @@ def main(argv: list[str] | None = None) -> Path:
                         if client_result.screenshots:
                             joined = ", ".join(str(path) for path in client_result.screenshots)
                             print(f"   zrzuty ekranu: {joined}")
+                if result.failures:
+                    for failure in result.failures:
+                        print(
+                            f"   ❌ ({failure.category}) {failure.subject}: {failure.message}"
+                        )
+                elif result.log_expectations or result.client_log_expectations:
+                    print("   ✅ wszystkie oczekiwania spełnione")
                 if result.log_expectations:
                     for expectation in result.log_expectations:
                         status = "OK" if expectation.matched else "NIE ZNALEZIONO"
