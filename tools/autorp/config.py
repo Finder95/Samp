@@ -8,7 +8,11 @@ from typing import Sequence
 
 from .pawn import escape_pawn_string, indent_lines, sanitize_identifier
 from .scenario import BotScenarioSpec
-from .tester import BotRunContext, ClientLogExpectation
+from .tester import (
+    BotRunContext,
+    ClientLogExpectation,
+    ClientLogExportRequest,
+)
 
 
 def _parse_colour(value: int | str) -> int:
@@ -1704,6 +1708,33 @@ class BotClientLogExpectationDefinition:
 
 
 @dataclass(slots=True)
+class BotClientLogExportDefinition:
+    """Definition describing a log file that should be exported after a run."""
+
+    client: str
+    log: str = "chatlog"
+    target: str | None = None
+    include_full: bool = False
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "BotClientLogExportDefinition":
+        return cls(
+            client=str(data.get("client", data.get("name"))),
+            log=str(data.get("log", data.get("source", "chatlog"))),
+            target=(str(data.get("target")) if data.get("target") is not None else None),
+            include_full=bool(data.get("include_full", data.get("full", False))),
+        )
+
+    def to_request(self) -> ClientLogExportRequest:
+        return ClientLogExportRequest(
+            client_name=self.client,
+            log_name=self.log,
+            target_path=Path(self.target) if self.target is not None else None,
+            include_full_log=self.include_full,
+        )
+
+
+@dataclass(slots=True)
 class BotRunDefinition:
     """Definition of a suite run connecting scripts and clients."""
 
@@ -1716,6 +1747,9 @@ class BotRunDefinition:
     expect_client_logs: tuple["BotClientLogExpectationDefinition", ...] = ()
     wait_before: float = 0.0
     record_playback_dir: str | None = None
+    collect_server_log: bool = False
+    server_log_export: str | None = None
+    export_client_logs: tuple[BotClientLogExportDefinition, ...] = ()
 
     @classmethod
     def from_dict(cls, data: dict) -> "BotRunDefinition":
@@ -1727,6 +1761,10 @@ class BotRunDefinition:
         client_log_expectations = tuple(
             BotClientLogExpectationDefinition.from_dict(entry)
             for entry in data.get("expect_client_logs", [])
+        )
+        client_log_exports = tuple(
+            BotClientLogExportDefinition.from_dict(entry)
+            for entry in data.get("export_client_logs", [])
         )
         return cls(
             scenario=str(scenario_name),
@@ -1742,6 +1780,13 @@ class BotRunDefinition:
                 if data.get("record_playback_dir") is not None
                 else None
             ),
+            collect_server_log=bool(data.get("collect_server_log", False)),
+            server_log_export=(
+                str(data.get("server_log_export"))
+                if data.get("server_log_export") is not None
+                else None
+            ),
+            export_client_logs=client_log_exports,
         )
 
 
@@ -1777,6 +1822,15 @@ class BotAutomationPlan:
                         Path(run.record_playback_dir)
                         if run.record_playback_dir is not None
                         else None
+                    ),
+                    capture_server_log=run.collect_server_log,
+                    server_log_export=(
+                        Path(run.server_log_export)
+                        if run.server_log_export is not None
+                        else None
+                    ),
+                    client_log_exports=tuple(
+                        export.to_request() for export in run.export_client_logs
                     ),
                 )
             )

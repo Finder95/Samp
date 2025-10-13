@@ -151,6 +151,9 @@ def test_cli_runs_bot_tests(tmp_path: Path, monkeypatch):
             def wait_for(self, phrase: str, timeout: float = 10.0) -> bool:
                 return True
 
+            def collect_since_mark(self, include_full: bool = False) -> str:
+                return ""
+
         class DummyController:
             server_address = "127.0.0.1:7777"
             log_monitor = FakeMonitor()

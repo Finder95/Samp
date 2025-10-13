@@ -21,7 +21,9 @@ from tools.autorp.tester import (
     BotScript,
     ClientLogExpectation,
     ClientLogMonitor,
+    ClientLogExportRequest,
     TestOrchestrator,
+    ServerLogMonitor,
 )
 
 
@@ -257,6 +259,82 @@ def test_orchestrator_records_playback_and_screenshots(tmp_path):
     assert client_result.screenshots == (shot_path,)
 
 
+def test_orchestrator_exports_logs(tmp_path):
+    server_log_path = tmp_path / "server_log.txt"
+    server_log_path.write_text("", encoding="utf-8")
+    client_log_path = tmp_path / "client_log.txt"
+    client_log_path.write_text("", encoding="utf-8")
+
+    class ExportingClient(DummyBotClient):
+        def execute_script(self, script: BotScript):  # type: ignore[override]
+            result = super().execute_script(script)
+            client_log_path.write_text(
+                client_log_path.read_text(encoding="utf-8") + "client ready\n",
+                encoding="utf-8",
+            )
+            server_log_path.write_text(
+                server_log_path.read_text(encoding="utf-8") + "player joined\n",
+                encoding="utf-8",
+            )
+            return result
+
+    client_monitor = ClientLogMonitor(
+        client_name="exporter",
+        name="chatlog",
+        log_path=client_log_path,
+    )
+    transport = BufferedCommandTransport()
+    client = ExportingClient(name="exporter", transport=transport, log_monitors=(client_monitor,))
+
+    server_monitor = ServerLogMonitor(server_log_path)
+
+    class DummyController:
+        def __init__(self):
+            self.server_address = "127.0.0.1:7777"
+            self.log_monitor = server_monitor
+
+        class _Context:
+            def __init__(self, outer):
+                self._outer = outer
+
+            def __enter__(self):
+                server_log_path.write_text("", encoding="utf-8")
+                return self._outer
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        def running(self, timeout: float = 20.0):
+            return self._Context(self)
+
+    orchestrator = TestOrchestrator(
+        clients=[client],
+        server_controller=DummyController(),
+    )
+    script = BotScript(description="ExportFlow", commands=("/ready",))
+    context = BotRunContext(
+        script=script,
+        capture_server_log=True,
+        server_log_export=tmp_path / "server_export.log",
+        client_log_exports=(
+            ClientLogExportRequest(
+                client_name="exporter",
+                log_name="chatlog",
+                target_path=tmp_path / "client_export.log",
+            ),
+        ),
+    )
+    result = orchestrator.run_suite([context])[0]
+    assert "player joined" in (result.server_log_excerpt or "")
+    assert result.server_log_path is not None and result.server_log_path.exists()
+    assert result.server_log_path.read_text(encoding="utf-8").strip() == "player joined"
+    assert result.client_log_exports
+    export_result = result.client_log_exports[0]
+    assert export_result.target_path is not None and export_result.target_path.exists()
+    assert "client ready" in export_result.target_path.read_text(encoding="utf-8")
+    assert client_log_path.read_text(encoding="utf-8").strip().endswith("client ready")
+
+
 def test_config_bot_plan_contexts():
     data = {
         "name": "Demo",
@@ -287,6 +365,16 @@ def test_config_bot_plan_contexts():
                     "expect_client_logs": [{"client": "dummy", "phrase": "ready"}],
                     "wait_before": 0.25,
                     "record_playback_dir": "artifacts/playback",
+                    "collect_server_log": True,
+                    "server_log_export": "artifacts/server.log",
+                    "export_client_logs": [
+                        {
+                            "client": "dummy",
+                            "log": "custom",
+                            "target": "artifacts/custom.log",
+                            "include_full": True,
+                        }
+                    ],
                 }
             ],
         },
@@ -302,3 +390,7 @@ def test_config_bot_plan_contexts():
     assert contexts[0].client_log_expectations[0].phrase == "ready"
     assert contexts[0].wait_before == 0.25
     assert contexts[0].record_playback_dir == Path("artifacts/playback")
+    assert contexts[0].capture_server_log is True
+    assert contexts[0].server_log_export == Path("artifacts/server.log")
+    assert contexts[0].client_log_exports[0].include_full_log is True
+    assert contexts[0].client_log_exports[0].target_path == Path("artifacts/custom.log")

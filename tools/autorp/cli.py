@@ -107,6 +107,18 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Jeśli ustawiono, zapisuje logi odtworzenia botów w katalogu",
     )
+    parser.add_argument(
+        "--bot-server-log-dir",
+        type=Path,
+        default=None,
+        help="Domyślny katalog eksportu logów serwera z przebiegów botów",
+    )
+    parser.add_argument(
+        "--bot-client-log-dir",
+        type=Path,
+        default=None,
+        help="Domyślny katalog eksportu logów klienckich",
+    )
     return parser.parse_args(argv)
 
 
@@ -277,6 +289,16 @@ def main(argv: list[str] | None = None) -> Path:
                 contexts = plan_contexts
             else:
                 contexts = [BotRunContext(script=script) for script in scripts]
+            def _slugify(text: str) -> str:
+                normalised = (text or "scenario").strip().lower()
+                if not normalised:
+                    normalised = "scenario"
+                safe = [
+                    char if char.isalnum() or char in {"-", "_"} else "_"
+                    for char in normalised
+                ]
+                slug = "".join(safe)
+                return slug or "scenario"
             record_root_arg = args.bot_record_playback_dir
             package_root = package_dir
             for context in contexts:
@@ -285,6 +307,14 @@ def main(argv: list[str] | None = None) -> Path:
                     and not context.record_playback_dir.is_absolute()
                 ):
                     context.record_playback_dir = package_root / context.record_playback_dir
+                if (
+                    context.server_log_export is not None
+                    and not context.server_log_export.is_absolute()
+                ):
+                    context.server_log_export = package_root / context.server_log_export
+                for export in context.client_log_exports:
+                    if export.target_path is not None and not export.target_path.is_absolute():
+                        export.target_path = package_root / export.target_path
             if record_root_arg is not None:
                 resolved_root = (
                     record_root_arg
@@ -295,6 +325,38 @@ def main(argv: list[str] | None = None) -> Path:
                 for context in contexts:
                     if context.record_playback_dir is None:
                         context.record_playback_dir = resolved_root
+            if args.bot_server_log_dir is not None:
+                server_log_root = (
+                    args.bot_server_log_dir
+                    if args.bot_server_log_dir.is_absolute()
+                    else package_root / args.bot_server_log_dir
+                )
+                server_log_root.mkdir(parents=True, exist_ok=True)
+            else:
+                server_log_root = None
+            if args.bot_client_log_dir is not None:
+                client_log_root = (
+                    args.bot_client_log_dir
+                    if args.bot_client_log_dir.is_absolute()
+                    else package_root / args.bot_client_log_dir
+                )
+                client_log_root.mkdir(parents=True, exist_ok=True)
+            else:
+                client_log_root = None
+            if server_log_root is not None:
+                for context in contexts:
+                    if context.server_log_export is None:
+                        slug = _slugify(context.script.description or "scenario")
+                        context.server_log_export = server_log_root / f"{slug}_server.log"
+            if client_log_root is not None:
+                for context in contexts:
+                    for export in context.client_log_exports:
+                        if export.target_path is None:
+                            slug = _slugify(context.script.description or "scenario")
+                            export.target_path = (
+                                client_log_root
+                                / f"{slug}_{export.client_name}_{export.log_name}.log"
+                            )
             registered: dict[str, Path] = {}
             for context in contexts:
                 desc = context.script.description or "scenario"
@@ -326,6 +388,20 @@ def main(argv: list[str] | None = None) -> Path:
                     for expectation in result.log_expectations:
                         status = "OK" if expectation.matched else "NIE ZNALEZIONO"
                         print(f"   oczekiwanie logu '{expectation.phrase}': {status}")
+                if result.server_log_path is not None:
+                    print(f"   zapis logu serwera: {result.server_log_path}")
+                elif result.server_log_excerpt:
+                    preview = " ".join(result.server_log_excerpt.strip().splitlines()[:2])
+                    if preview:
+                        print(f"   fragment logu serwera: {preview}")
+                if result.client_log_exports:
+                    for export in result.client_log_exports:
+                        label = f"{export.client_name}/{export.log_name}"
+                        if export.target_path is not None:
+                            print(f"   log klienta {label}: {export.target_path}")
+                        elif export.content:
+                            lines = len(export.content.splitlines())
+                            print(f"   log klienta {label}: {lines} linii (w pamięci)")
                 print("---")
 
     return generated_path

@@ -171,6 +171,26 @@ class ClientLogExpectationResult:
 
 
 @dataclass(slots=True)
+class ClientLogExportRequest:
+    """Description of a client log that should be materialised as an artefact."""
+
+    client_name: str
+    log_name: str = "chatlog"
+    target_path: Path | None = None
+    include_full_log: bool = False
+
+
+@dataclass(slots=True)
+class ClientLogExportResult:
+    """Result returned for each exported client log."""
+
+    client_name: str
+    log_name: str
+    content: str
+    target_path: Path | None = None
+
+
+@dataclass(slots=True)
 class ClientRunResult:
     """Result returned by the orchestrator for a single client."""
 
@@ -188,6 +208,9 @@ class TestRunResult:
     client_results: tuple[ClientRunResult, ...]
     log_expectations: tuple[LogExpectationResult, ...] = ()
     client_log_expectations: tuple[ClientLogExpectationResult, ...] = ()
+    server_log_excerpt: str | None = None
+    server_log_path: Path | None = None
+    client_log_exports: tuple[ClientLogExportResult, ...] = ()
 
     def successful_clients(self) -> list[str]:
         return [result.client_name for result in self.client_results if result.log is not None]
@@ -209,6 +232,9 @@ class BotRunContext:
     client_log_expectations: tuple[ClientLogExpectation, ...] = ()
     wait_before: float = 0.0
     record_playback_dir: Path | None = None
+    capture_server_log: bool = False
+    server_log_export: Path | None = None
+    client_log_exports: tuple[ClientLogExportRequest, ...] = ()
 
 
 class SampServerController:
@@ -438,6 +464,42 @@ class TestOrchestrator:
             )
         return tuple(results)
 
+    def _export_client_logs(
+        self,
+        requests: Sequence[ClientLogExportRequest],
+        monitor_lookup: dict[str, dict[str, "ClientLogMonitor"]],
+    ) -> tuple[ClientLogExportResult, ...]:
+        if not requests:
+            return ()
+        results: list[ClientLogExportResult] = []
+        for request in requests:
+            client_monitors = monitor_lookup.get(request.client_name)
+            monitor = None if client_monitors is None else client_monitors.get(request.log_name)
+            if monitor is None:
+                results.append(
+                    ClientLogExportResult(
+                        client_name=request.client_name,
+                        log_name=request.log_name,
+                        content="",
+                        target_path=request.target_path,
+                    )
+                )
+                continue
+            content = monitor.collect_since_mark(include_full=request.include_full_log)
+            path = request.target_path
+            if path is not None:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content, encoding="utf-8")
+            results.append(
+                ClientLogExportResult(
+                    client_name=request.client_name,
+                    log_name=request.log_name,
+                    content=content,
+                    target_path=path,
+                )
+            )
+        return tuple(results)
+
     def run(
         self,
         script: BotScript,
@@ -447,6 +509,9 @@ class TestOrchestrator:
         log_timeout: float = 15.0,
         client_log_expectations: Sequence[ClientLogExpectation] | None = None,
         record_playback_dir: Path | None = None,
+        capture_server_log: bool = False,
+        server_log_export: Path | None = None,
+        client_log_exports: Sequence[ClientLogExportRequest] | None = None,
     ) -> TestRunResult:
         """Run the script across all configured clients."""
 
@@ -454,6 +519,10 @@ class TestOrchestrator:
         expectations = tuple(expect_server_logs or ())
         client_monitor_lookup = self._collect_client_monitors(selected_clients)
         client_expectations = tuple(client_log_expectations or ())
+        client_export_requests = tuple(client_log_exports or ())
+        client_export_results: tuple[ClientLogExportResult, ...]
+        server_log_excerpt: str | None = None
+        server_log_path: Path | None = None
         if server_address:
             results = self._run_on_clients(
                 server_address, script, selected_clients, record_dir=record_playback_dir
@@ -462,11 +531,17 @@ class TestOrchestrator:
             client_log_results = self._evaluate_client_expectations(
                 client_expectations, log_timeout, client_monitor_lookup
             )
+            client_export_results = self._export_client_logs(
+                client_export_requests, client_monitor_lookup
+            )
             return TestRunResult(
                 script=script,
                 client_results=tuple(results),
                 log_expectations=log_expectations,
                 client_log_expectations=client_log_results,
+                server_log_excerpt=server_log_excerpt,
+                server_log_path=server_log_path,
+                client_log_exports=client_export_results,
             )
 
         if self.server_controller is None:
@@ -485,11 +560,24 @@ class TestOrchestrator:
             client_log_results = self._evaluate_client_expectations(
                 client_expectations, log_timeout, client_monitor_lookup
             )
+            client_export_results = self._export_client_logs(
+                client_export_requests, client_monitor_lookup
+            )
+            if monitor is not None and (capture_server_log or server_log_export is not None):
+                excerpt = monitor.collect_since_mark(include_full=capture_server_log)
+                server_log_excerpt = excerpt
+                if server_log_export is not None:
+                    server_log_export.parent.mkdir(parents=True, exist_ok=True)
+                    server_log_export.write_text(excerpt, encoding="utf-8")
+                    server_log_path = server_log_export
         return TestRunResult(
             script=script,
             client_results=tuple(results),
             log_expectations=log_expectations,
             client_log_expectations=client_log_results,
+            server_log_excerpt=server_log_excerpt,
+            server_log_path=server_log_path,
+            client_log_exports=client_export_results,
         )
 
     def run_suite(
@@ -512,6 +600,9 @@ class TestOrchestrator:
                     log_timeout=run.log_timeout,
                     client_log_expectations=run.client_log_expectations,
                     record_playback_dir=run.record_playback_dir,
+                    capture_server_log=run.capture_server_log,
+                    server_log_export=run.server_log_export,
+                    client_log_exports=run.client_log_exports,
                 )
                 results.append(result)
                 if run.wait_after > 0 and iteration + 1 < run.iterations:
@@ -533,6 +624,8 @@ __all__ = [
     "LogExpectationResult",
     "ClientLogExpectation",
     "ClientLogExpectationResult",
+    "ClientLogExportRequest",
+    "ClientLogExportResult",
     "ClientRunResult",
     "TestRunResult",
     "BotRunContext",
@@ -547,6 +640,7 @@ class ServerLogMonitor:
     def __init__(self, log_path: Path) -> None:
         self.log_path = log_path
         self._offset = 0
+        self._mark_offset = 0
 
     def _read(self) -> str:
         if not self.log_path.exists():
@@ -559,6 +653,7 @@ class ServerLogMonitor:
     def mark(self) -> None:
         content = self._read()
         self._offset = len(content)
+        self._mark_offset = len(content)
 
     def wait_for(self, phrase: str, timeout: float = 10.0, poll_interval: float = 0.5) -> bool:
         deadline = time.time() + timeout
@@ -574,6 +669,16 @@ class ServerLogMonitor:
 
     def contains(self, phrase: str) -> bool:
         return phrase in self._read()
+
+    def collect_since_mark(self, include_full: bool = False) -> str:
+        content = self._read()
+        if include_full:
+            segment = content
+        else:
+            segment = content[self._mark_offset :]
+        self._mark_offset = len(content)
+        self._offset = len(content)
+        return segment
 
 
 @dataclass(slots=True)
@@ -585,6 +690,7 @@ class ClientLogMonitor:
     log_path: Path
     encoding: str = "utf-8"
     _offset: int = 0
+    _mark_offset: int = 0
 
     def _read(self) -> str:
         if not self.log_path.exists():
@@ -594,6 +700,7 @@ class ClientLogMonitor:
     def mark(self) -> None:
         content = self._read()
         self._offset = len(content)
+        self._mark_offset = len(content)
 
     def wait_for(self, phrase: str, timeout: float = 10.0, poll_interval: float = 0.5) -> bool:
         deadline = time.time() + timeout
@@ -609,3 +716,13 @@ class ClientLogMonitor:
 
     def contains(self, phrase: str) -> bool:
         return phrase in self._read()
+
+    def collect_since_mark(self, include_full: bool = False) -> str:
+        content = self._read()
+        if include_full:
+            segment = content
+        else:
+            segment = content[self._mark_offset :]
+        self._mark_offset = len(content)
+        self._offset = len(content)
+        return segment

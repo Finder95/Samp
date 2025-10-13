@@ -92,8 +92,11 @@ logi serwera i logi klienckie.
 Konfiguracja JSON może zawierać blok `bot_automation`, w którym definiujemy listę klientów
 (`clients`) oraz przebiegów (`runs`). Każdy przebieg wskazuje scenariusz z sekcji
 `bot_scenarios`, listę klientów do uruchomienia, oczekiwane frazy w logach serwera oraz
-liczbę iteracji i odstępów między nimi. Przykładowa konfiguracja znajduje się w
-`configs/sample_config.json`.
+liczbę iteracji i odstępów między nimi. Dodatkowo można aktywować zbieranie logu serwera
+(`collect_server_log`, `server_log_export`) i eksportować konkretne logi klienckie
+(`export_client_logs`) – każdy wpis pozwala wskazać klienta, nazwę logu, katalog docelowy
+oraz czy zapisać cały plik czy jedynie przyrost z danego przebiegu. Przykładowa konfiguracja
+znajduje się w `configs/sample_config.json`.
 
 Moduł `tools.autorp.bots` zawiera gotowe implementacje klientów:
 
@@ -106,24 +109,29 @@ Moduł `tools.autorp.bots` zawiera gotowe implementacje klientów:
   własne integracje z makrami lub CLEO, tłumacząc akcje scenariuszy (`wait`, `chat`,
   `teleport`, `keypress`, `macro`, `wait_for`, `focus_window`, `type_text`, `mouse_move`,
   `mouse_click`, `mouse_scroll`, `key_sequence`, `screenshot`, `config`, komendy tekstowe)
-  na rzeczywiste instrukcje.
+  na rzeczywiste instrukcje, a także raportując przechwycone logi klientów.
 
 `WineWindowInteractor` zapewnia owijarkę na `xdotool`, co pozwala na aktywację okna Wine,
 symulowanie wpisywania tekstu, pojedynczych zdarzeń klawiszowych (`key`, `key_event`) oraz
 ruchów i przewijania myszy w trakcie wykonywania scenariuszy. Klient może automatycznie
 zrealizować sekwencje przygotowawcze (`setup_actions`) i porządkowe (`teardown_actions`)
 jeszcze przed wykonaniem właściwego scenariusza, a każda akcja `screenshot` rejestruje plik do
-raportu z przebiegu.
+raportu z przebiegu. Nowe ustawienia pozwalają także zebrać fragmenty logów czatu lub innych
+plików dzięki `ClientLogMonitor` oraz zapisać je w katalogach artefaktów.
 
 Każdy przebieg scenariusza zwraca `PlaybackLog` z wysłanymi akcjami i znacznikami czasu.
 Rezultat `TestRunResult` zawiera listę klientów, którzy ukończyli test, status dopasowania
 oczekiwań z logów serwera i logów klienckich oraz – jeśli włączono rejestrowanie – ścieżki do
-zapisanych logów odtworzenia i zebranych zrzutów ekranu.
+zapisanych logów odtworzenia i zebranych zrzutów ekranu. Dodatkowo zapisuje fragment logu
+serwera (oraz opcjonalny plik z eksportem) i listę wyeksportowanych logów klienckich
+zawierających treść przebiegu.
 
 CLI udostępnia dodatkowe przełączniki wspierające pełną automatyzację (`--xdotool-binary`,
-`--bot-focus-window`, `--bot-window-title`, `--bot-record-playback-dir`), które można łączyć z
-definicjami klientów z konfiguracji (`logs`, `chatlog`, `setup_actions`, `teardown_actions`,
-`expect_client_logs`, `record_playback_dir`, `wait_before`, `wait_after`).
+`--bot-focus-window`, `--bot-window-title`, `--bot-record-playback-dir`,
+`--bot-server-log-dir`, `--bot-client-log-dir`), które można łączyć z definicjami klientów z
+konfiguracji (`logs`, `chatlog`, `setup_actions`, `teardown_actions`, `expect_client_logs`,
+`record_playback_dir`, `wait_before`, `wait_after`, `collect_server_log`,
+`server_log_export`, `export_client_logs`).
 
 ### Testy
 ```bash

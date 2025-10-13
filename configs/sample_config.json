@@ -314,7 +314,16 @@
         "expect_client_logs": [
           {"client": "dummy_suite", "phrase": "Dzień dobry"}
         ],
-        "record_playback_dir": "Test/playback/patrol"
+        "record_playback_dir": "Test/playback/patrol",
+        "collect_server_log": true,
+        "server_log_export": "Test/logs/patrol_server.log",
+        "export_client_logs": [
+          {
+            "client": "dummy_suite",
+            "log": "dummy_chat",
+            "target": "Test/logs/patrol_dummy_chat.log"
+          }
+        ]
       },
       {
         "scenario": "heist_briefing",
@@ -326,7 +335,15 @@
         "expect_client_logs": [
           {"client": "wine_suite", "phrase": "Zespół drugi"}
         ],
-        "record_playback_dir": "Test/playback/heist"
+        "record_playback_dir": "Test/playback/heist",
+        "export_client_logs": [
+          {
+            "client": "wine_suite",
+            "log": "playback",
+            "target": "Test/logs/heist_wine_playback.log",
+            "include_full": true
+          }
+        ]
       },
       {
         "scenario": "client_focus_demo",
@@ -337,7 +354,8 @@
         "expect_client_logs": [
           {"client": "wine_suite", "phrase": "qa_bot", "log": "playback", "timeout": 3.0}
         ],
-        "record_playback_dir": "Test/playback/window"
+        "record_playback_dir": "Test/playback/window",
+        "collect_server_log": true
       }
     ]
   },
