@@ -8,6 +8,7 @@ from pathlib import Path
 from .bots import BufferedCommandTransport, DummyBotClient, FileCommandTransport, WineSampClient
 from .config import BotClientDefinition, GamemodeConfig
 from .generator import GamemodeGenerator
+from .slug import slugify_description
 from .tester import BotRunContext, SampServerController, TestOrchestrator
 
 
@@ -352,16 +353,6 @@ def main(argv: list[str] | None = None) -> Path:
                 contexts = plan_contexts
             else:
                 contexts = [BotRunContext(script=script) for script in scripts]
-            def _slugify(text: str) -> str:
-                normalised = (text or "scenario").strip().lower()
-                if not normalised:
-                    normalised = "scenario"
-                safe = [
-                    char if char.isalnum() or char in {"-", "_"} else "_"
-                    for char in normalised
-                ]
-                slug = "".join(safe)
-                return slug or "scenario"
             include_filters = {value.strip().lower() for value in args.bot_only or [] if value}
             exclude_filters = {value.strip().lower() for value in args.bot_skip or [] if value}
 
@@ -371,7 +362,7 @@ def main(argv: list[str] | None = None) -> Path:
                 if desc:
                     lowered = desc.lower()
                     tokens.add(lowered)
-                    tokens.add(_slugify(desc))
+                    tokens.add(slugify_description(desc))
                 tokens.update(tag.lower() for tag in context.tags)
                 return {token for token in tokens if token}
 
@@ -443,13 +434,13 @@ def main(argv: list[str] | None = None) -> Path:
             if server_log_root is not None:
                 for context in contexts:
                     if context.server_log_export is None:
-                        slug = _slugify(context.script.description or "scenario")
+                        slug = slugify_description(context.script.description)
                         context.server_log_export = server_log_root / f"{slug}_server.log"
             if client_log_root is not None:
                 for context in contexts:
                     for export in context.client_log_exports:
                         if export.target_path is None:
-                            slug = _slugify(context.script.description or "scenario")
+                            slug = slugify_description(context.script.description)
                             export.target_path = (
                                 client_log_root
                                 / f"{slug}_{export.client_name}_{export.log_name}.log"

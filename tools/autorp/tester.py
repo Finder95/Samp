@@ -10,6 +10,8 @@ import subprocess
 import time
 from typing import Iterable, Mapping, Protocol, Sequence
 
+from .slug import slugify_description
+
 
 class BotClient(Protocol):
     """Minimal interface for a controllable GTA:SA client."""
@@ -471,17 +473,9 @@ class TestOrchestrator:
         self.scripts_dir.mkdir(parents=True, exist_ok=True)
         self.server_controller = server_controller
 
-    def _slugify(self, text: str | None) -> str:
-        normalised = (text or "").strip().lower()
-        if not normalised:
-            return "scenario"
-        safe = re.sub(r"[^a-z0-9._-]+", "_", normalised)
-        safe = safe.strip("._-")
-        return safe or "scenario"
-
     def register_script(self, script: BotScript) -> Path:
         """Persist script to disk for inspection or reuse."""
-        base_name = self._slugify(script.description)
+        base_name = slugify_description(script.description)
         candidate = self.scripts_dir / f"{base_name}.json"
         suffix = 1
         while candidate.exists():
