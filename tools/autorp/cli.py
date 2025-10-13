@@ -549,6 +549,7 @@ def main(argv: list[str] | None = None) -> Path:
                         {
                             "description": desc,
                             "status": status,
+                            "tags": list(result.tags),
                             "attempt": result.attempt_index,
                             "iteration": result.iteration_index,
                             "duration": result.duration,
@@ -638,18 +639,30 @@ def main(argv: list[str] | None = None) -> Path:
             stats = TestOrchestrator.summarise_results(results)
             scenario_stats = TestOrchestrator.summarise_per_script(results)
             client_stats = TestOrchestrator.summarise_per_client(results)
+            tag_stats = TestOrchestrator.summarise_per_tag(results)
             print(
                 "Podsumowanie: "
                 f"{stats.successful_runs}/{stats.total_runs} scenariuszy zakończonych sukcesem"
             )
             if stats.success_rate is not None:
                 print(f"   skuteczność: {stats.success_rate * 100:.1f}%")
+            duration_segments: list[str] = []
             if stats.average_duration is not None:
-                print(
-                    "   czasy: średni "
-                    f"{stats.average_duration:.2f}s, najkrótszy "
-                    f"{stats.shortest_duration:.2f}s, najdłuższy {stats.longest_duration:.2f}s"
+                duration_segments.append(f"średni {stats.average_duration:.2f}s")
+            if stats.median_duration is not None:
+                duration_segments.append(f"mediana {stats.median_duration:.2f}s")
+            if stats.p90_duration is not None:
+                duration_segments.append(f"p90 {stats.p90_duration:.2f}s")
+            if (
+                stats.shortest_duration is not None
+                and stats.longest_duration is not None
+                and stats.total_runs
+            ):
+                duration_segments.append(
+                    f"zakres {stats.shortest_duration:.2f}s-{stats.longest_duration:.2f}s"
                 )
+            if duration_segments:
+                print(f"   czasy: {', '.join(duration_segments)}")
             if stats.failure_categories:
                 details = ", ".join(
                     f"{category}: {count}" for category, count in sorted(stats.failure_categories.items())
@@ -668,6 +681,19 @@ def main(argv: list[str] | None = None) -> Path:
                         f"{description}: {summary.successful_runs}/{summary.total_runs} udanych, "
                         f"ostatni wynik {summary.last_status}"
                     )
+                    scenario_duration_parts: list[str] = []
+                    if summary.average_duration is not None:
+                        scenario_duration_parts.append(
+                            f"średnio {summary.average_duration:.2f}s"
+                        )
+                    if summary.median_duration is not None:
+                        scenario_duration_parts.append(
+                            f"mediana {summary.median_duration:.2f}s"
+                        )
+                    if summary.p90_duration is not None:
+                        scenario_duration_parts.append(f"p90 {summary.p90_duration:.2f}s")
+                    if scenario_duration_parts:
+                        print("         czasy: " + ", ".join(scenario_duration_parts))
                     if summary.retries:
                         print(
                             "         "
@@ -694,18 +720,60 @@ def main(argv: list[str] | None = None) -> Path:
                     )
                     if summary.total_commands:
                         average_commands = (
-                            f"{summary.average_commands:.1f}" if summary.average_commands is not None else "-"
+                            f"{summary.average_commands:.1f}"
+                            if summary.average_commands is not None
+                            else "-"
                         )
-                        print(
+                        command_line = (
                             "         "
                             f"komendy: łącznie {summary.total_commands}, średnio {average_commands} na log"
                         )
+                        if summary.median_commands is not None:
+                            command_line += f", mediana {summary.median_commands:.1f}"
+                        print(command_line)
                     if summary.average_log_duration is not None:
-                        print(
+                        log_line = (
                             "         "
                             f"czas logu: {summary.total_log_duration:.2f}s łącznie, "
                             f"średnio {summary.average_log_duration:.2f}s"
                         )
+                        if summary.median_log_duration is not None:
+                            log_line += f", mediana {summary.median_log_duration:.2f}s"
+                        print(log_line)
+            if tag_stats:
+                print("   tagi scenariuszy:")
+                for tag, summary in tag_stats.items():
+                    print(
+                        "      "
+                        f"#{tag}: {summary.successful_runs}/{summary.total_runs} udanych, "
+                        f"ostatni wynik {summary.last_status}"
+                    )
+                    tag_duration_parts: list[str] = []
+                    if summary.average_duration is not None:
+                        tag_duration_parts.append(f"średnio {summary.average_duration:.2f}s")
+                    if summary.median_duration is not None:
+                        tag_duration_parts.append(f"mediana {summary.median_duration:.2f}s")
+                    if summary.p90_duration is not None:
+                        tag_duration_parts.append(f"p90 {summary.p90_duration:.2f}s")
+                    if tag_duration_parts:
+                        print("         czasy: " + ", ".join(tag_duration_parts))
+                    if summary.retries:
+                        print(
+                            "         "
+                            f"ponowień: {summary.retries}, sukcesów po ponowieniu: {summary.flaky_successes}"
+                        )
+                    if summary.failure_categories:
+                        tag_failures = ", ".join(
+                            f"{category}: {count}"
+                            for category, count in sorted(summary.failure_categories.items())
+                        )
+                        print(f"         błędy: {tag_failures}")
+                    if summary.scenario_counts:
+                        scenario_overview = ", ".join(
+                            f"{scenario}: {count}"
+                            for scenario, count in summary.scenario_counts.items()
+                        )
+                        print(f"         scenariusze: {scenario_overview}")
 
             if args.bot_report_json is not None:
                 report_path = args.bot_report_json
@@ -720,6 +788,7 @@ def main(argv: list[str] | None = None) -> Path:
                 summary["per_client"] = {
                     name: client.as_dict() for name, client in client_stats.items()
                 }
+                summary["per_tag"] = {tag: tag_summary.as_dict() for tag, tag_summary in tag_stats.items()}
                 payload = {
                     "generated_gamemode": str(generated_path),
                     "package_dir": str(package_dir),

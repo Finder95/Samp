@@ -2,11 +2,13 @@
 from __future__ import annotations
 
 import json
+import math
 from collections import Counter
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 import re
 from pathlib import Path
+import statistics
 import subprocess
 import time
 from typing import Iterable, Mapping, Protocol, Sequence
@@ -317,6 +319,7 @@ class TestRunResult:
 
     script: BotScript
     client_results: tuple[ClientRunResult, ...]
+    tags: tuple[str, ...] = ()
     log_expectations: tuple[LogExpectationResult, ...] = ()
     client_log_expectations: tuple[ClientLogExpectationResult, ...] = ()
     server_log_excerpt: str | None = None
@@ -356,6 +359,8 @@ class SuiteStatistics:
     success_rate: float | None
     total_duration: float
     average_duration: float | None
+    median_duration: float | None
+    p90_duration: float | None
     shortest_duration: float | None
     longest_duration: float | None
     assertion_failures: int
@@ -371,6 +376,8 @@ class SuiteStatistics:
             "success_rate": self.success_rate,
             "total_duration": self.total_duration,
             "average_duration": self.average_duration,
+            "median_duration": self.median_duration,
+            "p90_duration": self.p90_duration,
             "shortest_duration": self.shortest_duration,
             "longest_duration": self.longest_duration,
             "assertion_failures": self.assertion_failures,
@@ -392,6 +399,8 @@ class ScenarioStatistics:
     flaky_successes: int
     total_duration: float
     average_duration: float | None
+    median_duration: float | None
+    p90_duration: float | None
     last_status: str
     failure_categories: dict[str, int]
 
@@ -405,6 +414,8 @@ class ScenarioStatistics:
             "flaky_successes": self.flaky_successes,
             "total_duration": self.total_duration,
             "average_duration": self.average_duration,
+            "median_duration": self.median_duration,
+            "p90_duration": self.p90_duration,
             "last_status": self.last_status,
             "failure_categories": dict(self.failure_categories),
         }
@@ -421,8 +432,10 @@ class ClientStatistics:
     runs_with_logs: int
     total_commands: int
     average_commands: float | None
+    median_commands: float | None
     total_log_duration: float
     average_log_duration: float | None
+    median_log_duration: float | None
     last_status: str
 
     def as_dict(self) -> dict[str, object]:
@@ -434,9 +447,47 @@ class ClientStatistics:
             "runs_with_logs": self.runs_with_logs,
             "total_commands": self.total_commands,
             "average_commands": self.average_commands,
+            "median_commands": self.median_commands,
             "total_log_duration": self.total_log_duration,
             "average_log_duration": self.average_log_duration,
+            "median_log_duration": self.median_log_duration,
             "last_status": self.last_status,
+        }
+
+
+@dataclass(slots=True)
+class TagStatistics:
+    """Aggregate statistics for runs grouped by tag."""
+
+    tag: str
+    total_runs: int
+    successful_runs: int
+    failed_runs: int
+    retries: int
+    flaky_successes: int
+    total_duration: float
+    average_duration: float | None
+    median_duration: float | None
+    p90_duration: float | None
+    last_status: str
+    failure_categories: dict[str, int]
+    scenario_counts: dict[str, int]
+
+    def as_dict(self) -> dict[str, object]:
+        return {
+            "tag": self.tag,
+            "total": self.total_runs,
+            "passed": self.successful_runs,
+            "failed": self.failed_runs,
+            "retries": self.retries,
+            "flaky_successes": self.flaky_successes,
+            "total_duration": self.total_duration,
+            "average_duration": self.average_duration,
+            "median_duration": self.median_duration,
+            "p90_duration": self.p90_duration,
+            "last_status": self.last_status,
+            "failure_categories": dict(self.failure_categories),
+            "scenarios": dict(self.scenario_counts),
         }
 
 
@@ -941,6 +992,7 @@ class TestOrchestrator:
         attempt_index: int = 1,
         iteration_index: int = 0,
         assertions: Sequence[RunAssertionRule] | None = None,
+        tags: Sequence[str] | None = None,
     ) -> TestRunResult:
         """Run the script across all configured clients."""
 
@@ -976,6 +1028,7 @@ class TestOrchestrator:
             return TestRunResult(
                 script=script,
                 client_results=tuple(results),
+                tags=tuple(tags or ()),
                 log_expectations=log_expectations,
                 client_log_expectations=client_log_results,
                 server_log_excerpt=server_log_excerpt,
@@ -1027,6 +1080,7 @@ class TestOrchestrator:
         return TestRunResult(
             script=script,
             client_results=tuple(results),
+            tags=tuple(tags or ()),
             log_expectations=log_expectations,
             client_log_expectations=client_log_results,
             server_log_excerpt=server_log_excerpt,
@@ -1042,16 +1096,57 @@ class TestOrchestrator:
         )
 
     @staticmethod
+    def _percentile(sorted_values: Sequence[float], percentile: float) -> float:
+        if not sorted_values:
+            return 0.0
+        if percentile <= 0:
+            return float(sorted_values[0])
+        if percentile >= 1:
+            return float(sorted_values[-1])
+        index = max(0, min(len(sorted_values) - 1, math.ceil(percentile * len(sorted_values)) - 1))
+        return float(sorted_values[index])
+
+    @staticmethod
+    def _duration_statistics(
+        durations: Sequence[float],
+    ) -> tuple[
+        float,
+        float | None,
+        float | None,
+        float | None,
+        float | None,
+        float | None,
+    ]:
+        if not durations:
+            return 0.0, None, None, None, None, None
+        ordered = sorted(float(value) for value in durations)
+        total = float(sum(ordered))
+        average = total / len(ordered) if ordered else None
+        median = float(statistics.median(ordered)) if ordered else None
+        p90 = (
+            float(TestOrchestrator._percentile(ordered, 0.9))
+            if len(ordered) > 1
+            else float(ordered[0])
+        )
+        shortest = float(ordered[0])
+        longest = float(ordered[-1])
+        return total, average, median, p90, shortest, longest
+
+    @staticmethod
     def summarise_results(results: Sequence[TestRunResult]) -> SuiteStatistics:
         """Compute aggregate statistics for a collection of test runs."""
 
         total_runs = len(results)
         successful_runs = sum(1 for result in results if result.is_successful())
-        durations = [result.duration for result in results if result.duration is not None]
-        total_duration = float(sum(durations)) if durations else 0.0
-        shortest_duration = min(durations) if durations else None
-        longest_duration = max(durations) if durations else None
-        average_duration = (total_duration / len(durations)) if durations else None
+        durations = [float(result.duration) for result in results if result.duration is not None]
+        (
+            total_duration,
+            average_duration,
+            median_duration,
+            p90_duration,
+            shortest_duration,
+            longest_duration,
+        ) = TestOrchestrator._duration_statistics(durations)
         success_rate = (successful_runs / total_runs) if total_runs else None
         assertion_failures = sum(
             1 for result in results for assertion in result.assertions if not assertion.passed
@@ -1073,6 +1168,8 @@ class TestOrchestrator:
             success_rate=success_rate,
             total_duration=total_duration,
             average_duration=average_duration,
+            median_duration=median_duration,
+            p90_duration=p90_duration,
             shortest_duration=shortest_duration,
             longest_duration=longest_duration,
             assertion_failures=assertion_failures,
@@ -1097,9 +1194,15 @@ class TestOrchestrator:
             runs = grouped[description]
             total_runs = len(runs)
             successful_runs = sum(1 for run in runs if run.is_successful())
-            durations = [run.duration for run in runs if run.duration is not None]
-            total_duration = float(sum(durations)) if durations else 0.0
-            average_duration = (total_duration / len(durations)) if durations else None
+            durations = [float(run.duration) for run in runs if run.duration is not None]
+            (
+                total_duration,
+                average_duration,
+                median_duration,
+                p90_duration,
+                _shortest,
+                _longest,
+            ) = TestOrchestrator._duration_statistics(durations)
             retries = sum(1 for run in runs if run.attempt_index > 1)
             flaky_successes = sum(
                 1 for run in runs if run.attempt_index > 1 and run.is_successful()
@@ -1117,6 +1220,8 @@ class TestOrchestrator:
                 flaky_successes=flaky_successes,
                 total_duration=total_duration,
                 average_duration=average_duration,
+                median_duration=median_duration,
+                p90_duration=p90_duration,
                 last_status=runs[-1].status_label(),
                 failure_categories=dict(category_counts),
             )
@@ -1140,12 +1245,19 @@ class TestOrchestrator:
             successful_runs = sum(1 for run, _ in entries if run.is_successful())
             runs_with_logs = sum(1 for _, client in entries if client.log is not None)
             logs = [client.log for _, client in entries if client.log is not None]
-            total_commands = sum(log.command_count() for log in logs)
-            total_log_duration = float(sum(log.total_duration() for log in logs)) if logs else 0.0
+            command_counts = [float(log.command_count()) for log in logs]
+            total_commands = int(sum(command_counts))
+            median_commands = float(statistics.median(command_counts)) if command_counts else None
             average_commands = (total_commands / runs_with_logs) if runs_with_logs else None
-            average_log_duration = (
-                (total_log_duration / runs_with_logs) if runs_with_logs else None
-            )
+            durations = [float(log.total_duration()) for log in logs]
+            (
+                total_log_duration,
+                average_log_duration,
+                median_log_duration,
+                _p90_log_duration,
+                _shortest_log,
+                _longest_log,
+            ) = TestOrchestrator._duration_statistics(durations)
             summaries[name] = ClientStatistics(
                 name=name,
                 total_runs=total_runs,
@@ -1154,9 +1266,64 @@ class TestOrchestrator:
                 runs_with_logs=runs_with_logs,
                 total_commands=total_commands,
                 average_commands=average_commands,
+                median_commands=median_commands,
                 total_log_duration=total_log_duration,
                 average_log_duration=average_log_duration,
+                median_log_duration=median_log_duration,
                 last_status=entries[-1][0].status_label(),
+            )
+        return summaries
+
+    @staticmethod
+    def summarise_per_tag(
+        results: Sequence[TestRunResult],
+    ) -> dict[str, TagStatistics]:
+        """Compute per-tag statistics for a sequence of run results."""
+
+        grouped: dict[str, list[TestRunResult]] = {}
+        for result in results:
+            for tag in result.tags:
+                grouped.setdefault(tag, []).append(result)
+
+        summaries: dict[str, TagStatistics] = {}
+        for tag in sorted(grouped):
+            runs = grouped[tag]
+            total_runs = len(runs)
+            successful_runs = sum(1 for run in runs if run.is_successful())
+            durations = [float(run.duration) for run in runs if run.duration is not None]
+            (
+                total_duration,
+                average_duration,
+                median_duration,
+                p90_duration,
+                _shortest,
+                _longest,
+            ) = TestOrchestrator._duration_statistics(durations)
+            retries = sum(1 for run in runs if run.attempt_index > 1)
+            flaky_successes = sum(
+                1 for run in runs if run.attempt_index > 1 and run.is_successful()
+            )
+            category_counts: Counter[str] = Counter()
+            scenario_counts: Counter[str] = Counter()
+            for run in runs:
+                scenario_description = (run.script.description or "").strip() or "scenario"
+                scenario_counts[scenario_description] += 1
+                for failure in run.failures:
+                    category_counts[failure.category] += 1
+            summaries[tag] = TagStatistics(
+                tag=tag,
+                total_runs=total_runs,
+                successful_runs=successful_runs,
+                failed_runs=total_runs - successful_runs,
+                retries=retries,
+                flaky_successes=flaky_successes,
+                total_duration=total_duration,
+                average_duration=average_duration,
+                median_duration=median_duration,
+                p90_duration=p90_duration,
+                last_status=runs[-1].status_label(),
+                failure_categories=dict(category_counts),
+                scenario_counts=dict(sorted(scenario_counts.items())),
             )
         return summaries
 
@@ -1193,6 +1360,7 @@ class TestOrchestrator:
                         attempt_index=attempt,
                         iteration_index=iteration,
                         assertions=run.assertions,
+                        tags=run.tags,
                     )
                     results.append(result)
                     if result.is_successful():
@@ -1218,6 +1386,7 @@ TestOrchestrator.__test__ = False  # type: ignore[attr-defined]
 TestRunResult.__test__ = False  # type: ignore[attr-defined]
 SuiteStatistics.__test__ = False  # type: ignore[attr-defined]
 ClientStatistics.__test__ = False  # type: ignore[attr-defined]
+TagStatistics.__test__ = False  # type: ignore[attr-defined]
 
 
 __all__ = [
@@ -1240,6 +1409,7 @@ __all__ = [
     "SuiteStatistics",
     "ScenarioStatistics",
     "ClientStatistics",
+    "TagStatistics",
     "BotRunContext",
     "RunAssertionRule",
     "RunAssertionResult",

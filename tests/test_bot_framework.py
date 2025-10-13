@@ -33,6 +33,7 @@ from tools.autorp.tester import (
     RunAssertionResult,
     RunAssertionRule,
     ScenarioStatistics,
+    TagStatistics,
     ServerLogExpectation,
     ServerLogMonitor,
     TestOrchestrator,
@@ -668,6 +669,8 @@ def test_orchestrator_summarise_results_compiles_statistics():
     assert stats.success_rate == 0.5
     assert stats.total_duration == 7.5
     assert stats.average_duration == 3.75
+    assert stats.median_duration == pytest.approx(3.75)
+    assert stats.p90_duration == pytest.approx(5.0)
     assert stats.shortest_duration == 2.5
     assert stats.longest_duration == 5.0
     assert stats.assertion_failures == 1
@@ -710,6 +713,8 @@ def test_orchestrator_summarise_per_script_groups_attempts():
     assert retry_stats.flaky_successes == 1
     assert retry_stats.total_duration == 7.0
     assert retry_stats.average_duration == 3.5
+    assert retry_stats.median_duration == pytest.approx(3.5)
+    assert retry_stats.p90_duration == pytest.approx(4.0)
     assert retry_stats.last_status == "SUCCESS"
     assert retry_stats.failure_categories == {"network": 1}
 
@@ -717,6 +722,8 @@ def test_orchestrator_summarise_per_script_groups_attempts():
     assert stable_stats.total_runs == 1
     assert stable_stats.retries == 0
     assert stable_stats.failure_categories == {}
+    assert stable_stats.median_duration == pytest.approx(2.0)
+    assert stable_stats.p90_duration == pytest.approx(2.0)
 
 
 def test_orchestrator_summarise_per_client_collects_log_metrics():
@@ -779,8 +786,10 @@ def test_orchestrator_summarise_per_client_collects_log_metrics():
     assert alpha_stats.runs_with_logs == 2
     assert alpha_stats.total_commands == 3
     assert alpha_stats.average_commands == pytest.approx(1.5)
+    assert alpha_stats.median_commands == pytest.approx(1.5)
     assert alpha_stats.total_log_duration == pytest.approx(3.0)
     assert alpha_stats.average_log_duration == pytest.approx(1.5)
+    assert alpha_stats.median_log_duration == pytest.approx(1.5)
     assert alpha_stats.last_status == "SUCCESS"
 
     beta_stats = summaries["beta"]
@@ -789,3 +798,62 @@ def test_orchestrator_summarise_per_client_collects_log_metrics():
     assert beta_stats.runs_with_logs == 1
     assert beta_stats.total_commands == 1
     assert beta_stats.average_log_duration == pytest.approx(0.5)
+    assert beta_stats.median_commands == pytest.approx(1.0)
+    assert beta_stats.median_log_duration == pytest.approx(0.5)
+
+
+def test_orchestrator_summarise_per_tag_groups_runs():
+    flaky_success = TestRunResult(
+        script=BotScript(description="Heist"),
+        client_results=(ClientRunResult(client_name="alpha", log=None),),
+        tags=("smoke", "p1"),
+        attempt_index=2,
+        duration=2.5,
+    )
+    smoke_failure = TestRunResult(
+        script=BotScript(description="FailCase"),
+        client_results=(ClientRunResult(client_name="alpha", log=None),),
+        tags=("smoke",),
+        failures=(RunFailure(category="assertion", subject="count", message="mismatch"),),
+        duration=3.0,
+    )
+    regression = TestRunResult(
+        script=BotScript(description="Regression"),
+        client_results=(ClientRunResult(client_name="beta", log=None),),
+        tags=("p1",),
+        duration=4.0,
+    )
+
+    summaries = TestOrchestrator.summarise_per_tag(
+        [smoke_failure, flaky_success, regression]
+    )
+    assert set(summaries) == {"smoke", "p1"}
+
+    smoke_stats = summaries["smoke"]
+    assert isinstance(smoke_stats, TagStatistics)
+    assert smoke_stats.total_runs == 2
+    assert smoke_stats.successful_runs == 1
+    assert smoke_stats.failed_runs == 1
+    assert smoke_stats.retries == 1
+    assert smoke_stats.flaky_successes == 1
+    assert smoke_stats.total_duration == pytest.approx(5.5)
+    assert smoke_stats.average_duration == pytest.approx(2.75)
+    assert smoke_stats.median_duration == pytest.approx(2.75)
+    assert smoke_stats.p90_duration == pytest.approx(3.0)
+    assert smoke_stats.failure_categories == {"assertion": 1}
+    assert smoke_stats.scenario_counts == {"FailCase": 1, "Heist": 1}
+    assert smoke_stats.last_status == "SUCCESS"
+
+    p1_stats = summaries["p1"]
+    assert p1_stats.total_runs == 2
+    assert p1_stats.successful_runs == 2
+    assert p1_stats.failed_runs == 0
+    assert p1_stats.retries == 1
+    assert p1_stats.flaky_successes == 1
+    assert p1_stats.total_duration == pytest.approx(6.5)
+    assert p1_stats.average_duration == pytest.approx(3.25)
+    assert p1_stats.median_duration == pytest.approx(3.25)
+    assert p1_stats.p90_duration == pytest.approx(4.0)
+    assert p1_stats.failure_categories == {}
+    assert p1_stats.scenario_counts == {"Heist": 1, "Regression": 1}
+    assert p1_stats.last_status == "SUCCESS"
